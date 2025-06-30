@@ -1,0 +1,17 @@
+name: claj
+displayName: "CLaJ"
+subtitle: "\u26A0 Incompatible with 'Scheme Size'"
+author: "ZetaMap, xzxADIxzx"
+main: com.xpdustry.claj.client.Main
+description: '''
+Reworked CLaJ protocol of the xzxADIxzx's Scheme Size mod.
+
+CLaJ (Copy Link and Join) allow you to play with your friends just by creating a room, copy the link and send it to your friends.
+
+[lightgray]Note: To install on Mindustry v8, please click 'View Releases' instead and install the latest version named 'CLaJ for Mindustry V8'.[]
+'''
+version: "2.4"
+minGameVersion: "146"
+java: true
+hidden: true
+repo: xpdustry/claj
