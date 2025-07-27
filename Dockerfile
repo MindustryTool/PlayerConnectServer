@@ -3,7 +3,9 @@ COPY --chown=gradle:gradle . /home/gradle/src
 
 WORKDIR /home/gradle/src
 
-RUN gradlew jar --no-daemon 
+RUN chmod +x gradlew
+
+RUN ./gradlew jar --no-daemon
 
 FROM eclipse-temurin:8-jre-alpine
 
