@@ -17,8 +17,6 @@ public class ServerRoom implements NetListener {
     public final IntMap<Connection> clients = new IntMap<>();
     private boolean isClosed;
 
-    public final NetworkSpeed transferredPackets = new NetworkSpeed(8);
-
     public ServerRoom(Connection host) {
         this.id = UUID.randomUUID().toString();
         this.host = host;
@@ -97,8 +95,6 @@ public class ServerRoom implements NetListener {
                 else
                     con.sendUDP(o);
 
-                transferredPackets.addUploadMark();
-
                 // Notify that this connection doesn't exist, this case normally never happen
             } else if (host.isConnected()) {
                 Packets.ConnectionClosedPacket p = new Packets.ConnectionClosedPacket();
@@ -120,7 +116,6 @@ public class ServerRoom implements NetListener {
             p.buffer = (ByteBuffer) object;
             host.sendTCP(p);
 
-            transferredPackets.addDownloadMark();
         }
     }
 

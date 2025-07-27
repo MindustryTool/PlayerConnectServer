@@ -42,11 +42,7 @@ public class NetworkRelay extends Server implements NetListener {
     public final ObjectMap<String, ServerRoom> rooms = new ObjectMap<>();
 
     public NetworkRelay() {
-        this(null);
-    }
-
-    public NetworkRelay(NetworkSpeed speedCalculator) {
-        super(32768, 16384, new Serializer(speedCalculator));
+        super(32768, 16384, new Serializer());
         addListener(this);
     }
 
@@ -308,19 +304,10 @@ public class NetworkRelay extends Server implements NetListener {
 
     public static class Serializer implements NetSerializer {
         private final ThreadLocal<ByteBuffer> last = arc.util.Threads.local(() -> ByteBuffer.allocate(16384));
-        private final NetworkSpeed networkSpeed;
-        private int lastPos;
 
-        /** @param networkSpeed is for debugging, sets to null to disable it */
-        public Serializer(NetworkSpeed networkSpeed) {
-            this.networkSpeed = networkSpeed;
-        }
 
         @Override
         public Object read(ByteBuffer buffer) {
-            if (networkSpeed != null)
-                networkSpeed.addDownloadMark(buffer.remaining());
-
             byte id = buffer.get();
 
             if (id == -2/* framework id */)
@@ -341,9 +328,6 @@ public class NetworkRelay extends Server implements NetListener {
 
         @Override
         public void write(ByteBuffer buffer, Object object) {
-            if (networkSpeed != null)
-                lastPos = buffer.position();
-
             if (object instanceof ByteBuffer) {
                 buffer.put((ByteBuffer) object);
 
@@ -358,9 +342,6 @@ public class NetworkRelay extends Server implements NetListener {
                 if (packet instanceof Packets.ConnectionPacketWrapPacket) // This one is special
                     buffer.put(((Packets.ConnectionPacketWrapPacket) packet).buffer);
             }
-
-            if (networkSpeed != null)
-                networkSpeed.addUploadMark(buffer.position() - lastPos);
         }
 
         public void writeFramework(ByteBuffer buffer, FrameworkMessage message) {

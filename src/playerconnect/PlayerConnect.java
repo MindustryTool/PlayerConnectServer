@@ -7,8 +7,7 @@ import arc.Events;
 import arc.util.Log;
 
 public class PlayerConnect {
-    public static final NetworkSpeed networkSpeed = new NetworkSpeed(8);
-    public static final NetworkRelay relay = new NetworkRelay(networkSpeed);
+    public static final NetworkRelay relay = new NetworkRelay();
     public static final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     public static void main(String[] args) {
