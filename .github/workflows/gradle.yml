@@ -13,6 +13,7 @@ jobs:
            with:
               distribution: "temurin"
               java-version: "8"
+              
          - name: Make Gradle wrapper executable
            run: chmod +x ./gradlew
 
