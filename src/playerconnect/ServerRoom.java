@@ -7,6 +7,7 @@ import arc.net.Connection;
 import arc.net.DcReason;
 import arc.net.NetListener;
 import arc.struct.IntMap;
+import playerconnect.shared.Packets;
 
 public class ServerRoom implements NetListener {
 

@@ -2,6 +2,7 @@ package playerconnect;
 
 import arc.net.Connection;
 import arc.net.DcReason;
+import playerconnect.shared.Packets;
 
 public class PlayerConnectEvents {
     public static class ServerLoadedEvent {

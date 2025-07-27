@@ -17,6 +17,7 @@ import arc.util.Log;
 import arc.util.Ratekeeper;
 import arc.util.io.ByteBufferInput;
 import arc.util.io.ByteBufferOutput;
+import playerconnect.shared.Packets;
 
 public class NetworkRelay extends Server implements NetListener {
     protected boolean isClosed;
