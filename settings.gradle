@@ -1,3 +1,1 @@
-rootProject.name = 'claj'
-
-include 'server', 'client'
+rootProject.name = 'PlayerConnectServer'

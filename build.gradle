@@ -3,13 +3,8 @@ apply plugin: "java"
 version '1.0'
 
 java {
-    targetCompatibility = 8
-    sourceCompatibility = JavaVersion.VERSION_17
-}
-
-allprojects{
-    tasks.withType(JavaCompile){
-        options.compilerArgs.addAll(['--release', '8'])
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(8)
     }
 }
 
@@ -46,9 +41,5 @@ jar{
     archiveFileName = "${project.archivesBaseName}.jar"
     from{
         configurations.runtimeClasspath.collect{it.isDirectory() ? it : zipTree(it)}
-    }
-
-    from(rootDir){
-        include "plugin.json"
     }
 }
