@@ -1,4 +1,4 @@
-package com.xpdustry.claj.server.util;
+package playerconnect;
 
 import arc.math.WindowedMean;
 import arc.util.Time;
