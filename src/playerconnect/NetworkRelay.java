@@ -74,12 +74,18 @@ public class NetworkRelay extends Server implements NetListener {
 
     @Override
     public void connected(Connection connection) {
-        if (isClosed() || Configs.IP_BLACK_LIST.contains(Utils.getIP(connection))) {
+        if (isClosed()) {
             connection.close(DcReason.closed);
             return;
         }
 
-        Log.debug("Connection @ received.", Utils.toString(connection));
+        if (Configs.IP_BLACK_LIST.contains(Utils.getIP(connection))) {
+            Log.info("Connection @ denied, ip banned: @", Utils.toString(connection), Utils.getIP(connection));
+            connection.close(DcReason.closed);
+            return;
+        }
+
+        Log.info("Connection @ received.", Utils.toString(connection));
         connection.setArbitraryData(new Ratekeeper());
         connection.setName("Connection" + Utils.toString(connection)); // fix id format in stacktraces
         Events.fire(new PlayerConnectEvents.ClientConnectedEvent(connection));
@@ -87,7 +93,7 @@ public class NetworkRelay extends Server implements NetListener {
 
     @Override
     public void disconnected(Connection connection, DcReason reason) {
-        Log.debug("Connection @ lost: @.", Utils.toString(connection), reason);
+        Log.info("Connection @ lost: @.", Utils.toString(connection), reason);
         notifiedIdle.remove(connection.getID());
         packetQueue.remove(connection.getID());
 
@@ -115,6 +121,7 @@ public class NetworkRelay extends Server implements NetListener {
     @Override
     public void received(Connection connection, Object object) {
         Log.info("Received " + object);
+
         if (!(connection.getArbitraryData() instanceof Ratekeeper) || (object instanceof FrameworkMessage))
             return;
 
@@ -305,7 +312,6 @@ public class NetworkRelay extends Server implements NetListener {
 
     public static class Serializer implements NetSerializer {
         private final ThreadLocal<ByteBuffer> last = arc.util.Threads.local(() -> ByteBuffer.allocate(16384));
-
 
         @Override
         public Object read(ByteBuffer buffer) {
