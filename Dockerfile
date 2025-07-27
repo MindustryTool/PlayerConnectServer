@@ -11,6 +11,4 @@ FROM eclipse-temurin:8-jre-alpine
 
 COPY --from=build /home/gradle/src/build/libs/*.jar /app/server.jar
 
-ENTRYPOINT ["java","-jar", "/app/server.jar"]
-
-
+ENTRYPOINT ["java","-Xmx512m","-jar", "/app/server.jar"]
