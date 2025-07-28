@@ -180,6 +180,7 @@ public class NetworkRelay extends Server implements NetListener {
                 connection.close(DcReason.error);
                 Log.info("Connection @ tried to join a non-existent room @.",
                         Utils.toString(connection), joinPacket.roomId);
+                Log.info("Room list: @", rooms.values().toSeq().map(r -> r.id).toString());
             }
 
         } else if (object instanceof Packets.RoomCreationRequestPacket) {
