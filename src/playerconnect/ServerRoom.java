@@ -7,6 +7,7 @@ import arc.net.Connection;
 import arc.net.DcReason;
 import arc.net.NetListener;
 import arc.struct.IntMap;
+import arc.util.Log;
 import playerconnect.shared.Packets;
 
 public class ServerRoom implements NetListener {
@@ -101,6 +102,7 @@ public class ServerRoom implements NetListener {
                 p.connectionId = connectionId;
                 p.reason = DcReason.error;
                 host.sendTCP(p);
+                Log.info("Closed connection: " + con);
             }
 
         } else if (host.isConnected() && clients.containsKey(connection.getID())) {

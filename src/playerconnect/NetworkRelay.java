@@ -176,8 +176,11 @@ public class NetworkRelay extends Server implements NetListener {
                 }
 
                 Events.fire(new PlayerConnectEvents.ConnectionJoinedEvent(connection, room));
-            } else
+            } else {
                 connection.close(DcReason.error);
+                Log.info("Connection @ tried to join a non-existent room @.",
+                        Utils.toString(connection), joinPacket.roomId);
+            }
 
         } else if (object instanceof Packets.RoomCreationRequestPacket) {
             // Ignore room creation requests when the server is closing
@@ -187,6 +190,7 @@ public class NetworkRelay extends Server implements NetListener {
                 connection.sendTCP(p);
                 connection.close(DcReason.error);
                 Events.fire(new PlayerConnectEvents.RoomCreationRejectedEvent(connection, p.reason));
+                Log.info("Ignore room creation, server is closing");
                 return;
             }
 
