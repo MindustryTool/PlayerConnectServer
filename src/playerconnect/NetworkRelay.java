@@ -283,6 +283,8 @@ public class NetworkRelay extends Server implements NetListener {
                     break;
                 }
             }
+        } else {
+            Log.warn("Unhandled packet: @", object);
         }
     }
 
