@@ -94,6 +94,11 @@ public class NetworkRelay extends Server implements NetListener {
     @Override
     public void disconnected(Connection connection, DcReason reason) {
         Log.info("Connection @ lost: @.", Utils.toString(connection), reason);
+
+        if (connection.getLastProtocolError() != null) {
+            Log.err(connection.getLastProtocolError());
+        }
+
         notifiedIdle.remove(connection.getID());
         packetQueue.remove(connection.getID());
 
