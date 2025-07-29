@@ -74,20 +74,24 @@ public class HttpServer {
         app.start(Integer.parseInt(System.getenv("HTTP_PORT")));
 
         Events.on(Packets.StatsPacket.class, event -> {
-            for (SseClient client : statsConsumers) {
-                StatsLiveEventData response = new StatsLiveEventData();
-                response.mapName = event.data.mapName;
-                response.name = event.data.name;
-                response.gamemode = event.data.gamemode;
-                response.mods = event.data.mods.list();
-                response.roomId = event.data.roomId;
+            StatsLiveEventData stat = new StatsLiveEventData();
+            stat.mapName = event.data.mapName;
+            stat.name = event.data.name;
+            stat.gamemode = event.data.gamemode;
+            stat.mods = event.data.mods.list();
+            stat.roomId = event.data.roomId;
 
-                for (Packets.StatsPacketPlayerData playerData : event.data.players) {
-                    StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
-                    player.name = playerData.name;
-                    player.locale = playerData.locale;
-                    response.players.add(player);
-                }
+            for (Packets.StatsPacketPlayerData playerData : event.data.players) {
+                StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
+                player.name = playerData.name;
+                player.locale = playerData.locale;
+                stat.players.add(player);
+            }
+
+            ArrayList<StatsLiveEventData> response = new ArrayList<>();
+            response.add(stat);
+
+            for (SseClient client : statsConsumers) {
                 client.sendEvent(response);
             }
         });
