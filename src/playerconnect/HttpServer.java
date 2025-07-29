@@ -49,7 +49,6 @@ public class HttpServer {
 
         app.sse("rooms", client -> {
             client.keepAlive();
-            client.sendComment("connected");
 
             client.onClose(() -> {
                 statsConsumers.remove(client);
