@@ -61,6 +61,19 @@ public class HttpServer {
                     statsConsumers.remove(client);
                 });
 
+                ArrayList<StatsLiveEventData> data = PlayerConnect.relay.rooms
+                        .values()
+                        .toSeq()
+                        .map(room -> {
+                            StatsLiveEventData response = new StatsLiveEventData();
+                            response.roomId = room.id;
+                            response.name = room.id;
+
+                            return response;
+                        }).list();
+
+                client.sendEvent(data);
+
                 statsConsumers.add(client);
             });
 
