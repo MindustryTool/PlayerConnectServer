@@ -47,7 +47,7 @@ public class HttpServer {
             });
         });
 
-        app.sse("workflow/events", client -> {
+        app.sse("rooms", client -> {
             client.keepAlive();
             client.sendComment("connected");
 
