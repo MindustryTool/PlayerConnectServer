@@ -4,8 +4,6 @@ import java.util.ArrayList;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-import org.eclipse.jetty.util.thread.ExecutorThreadPool;
-
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
@@ -39,11 +37,6 @@ public class HttpServer {
 
             config.http.asyncTimeout = 5_000;
             config.useVirtualThreads = true;
-
-            ExecutorThreadPool pool = new ExecutorThreadPool(50, 0);
-            pool.setName("HttpServer");
-            config.jetty.threadPool = pool;
-            config.jetty.modifyServer(server -> server.setStopTimeout(5_000)); // wait 5 seconds for existing requests
 
             config.registerPlugin(new RouteOverviewPlugin());
 
