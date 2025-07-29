@@ -9,6 +9,7 @@ import arc.util.Log;
 public class PlayerConnect {
     public static final NetworkRelay relay = new NetworkRelay();
     public static final ExecutorService executor = Executors.newSingleThreadExecutor();
+    public static final HttpServer httpServer = new HttpServer();
 
     public static void main(String[] args) {
         try {
