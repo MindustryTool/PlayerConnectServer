@@ -214,6 +214,7 @@ public class NetworkRelay extends Server implements NetListener {
             Log.info("Room @ created by connection @.", room.id, Utils.toString(connection));
             Events.fire(new PlayerConnectEvents.RoomCreatedEvent(room));
 
+
         } else if (object instanceof Packets.RoomClosureRequestPacket) {
             // Only room host can close the room
             if (room == null)

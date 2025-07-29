@@ -72,6 +72,12 @@ public class HttpServer {
 
         app.start(Integer.parseInt(System.getenv("HTTP_PORT")));
 
+        Events.on(PlayerConnectEvents.RoomCreatedEvent.class, event -> {
+            StatsLiveEventData stat = new StatsLiveEventData();
+            stat.roomId = event.room.id;
+            sendStat(stat);
+        });
+
         Events.on(Packets.StatsPacket.class, event -> {
             StatsLiveEventData stat = new StatsLiveEventData();
             stat.mapName = event.data.mapName;
@@ -86,14 +92,17 @@ public class HttpServer {
                 player.locale = playerData.locale;
                 stat.players.add(player);
             }
-
-            ArrayList<StatsLiveEventData> response = new ArrayList<>();
-            response.add(stat);
-
-            for (SseClient client : statsConsumers) {
-                client.sendEvent(response);
-            }
+            sendStat(stat);
         });
+    }
+
+    private void sendStat(StatsLiveEventData stat) {
+        ArrayList<StatsLiveEventData> response = new ArrayList<>();
+        response.add(stat);
+
+        for (SseClient client : statsConsumers) {
+            client.sendEvent(response);
+        }
     }
 
     public static class StatsLiveEventData {
