@@ -3,6 +3,9 @@ package playerconnect;
 import java.util.ArrayList;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -21,6 +24,7 @@ public class HttpServer {
     private Javalin app;
 
     private final Queue<SseClient> statsConsumers = new ConcurrentLinkedQueue<>();
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     public HttpServer() {
         app = Javalin.create(config -> {
@@ -94,6 +98,10 @@ public class HttpServer {
             }
             sendStat(stat);
         });
+
+        scheduler.scheduleWithFixedDelay(() -> {
+            statsConsumers.forEach(client -> client.sendComment("Kept alive"));
+        }, 0, 10, TimeUnit.SECONDS);
     }
 
     private void sendStat(StatsLiveEventData stat) {
