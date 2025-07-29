@@ -45,31 +45,30 @@ public class HttpServer {
                     Log.info("[" + ctx.method().name() + "] " + Math.round(ms) + "ms " + ctx.fullUrl());
                 }
             });
+        });
 
-            app.sse("workflow/events", client -> {
-                client.keepAlive();
-                client.sendComment("connected");
+        app.sse("workflow/events", client -> {
+            client.keepAlive();
+            client.sendComment("connected");
 
-                client.onClose(() -> {
-                    statsConsumers.remove(client);
-                });
-
-                ArrayList<StatsLiveEventData> data = PlayerConnect.relay.rooms
-                        .values()
-                        .toSeq()
-                        .map(room -> {
-                            StatsLiveEventData response = new StatsLiveEventData();
-                            response.roomId = room.id;
-                            response.name = room.id;
-
-                            return response;
-                        }).list();
-
-                client.sendEvent(data);
-
-                statsConsumers.add(client);
+            client.onClose(() -> {
+                statsConsumers.remove(client);
             });
 
+            ArrayList<StatsLiveEventData> data = PlayerConnect.relay.rooms
+                    .values()
+                    .toSeq()
+                    .map(room -> {
+                        StatsLiveEventData response = new StatsLiveEventData();
+                        response.roomId = room.id;
+                        response.name = room.id;
+
+                        return response;
+                    }).list();
+
+            client.sendEvent(data);
+
+            statsConsumers.add(client);
         });
 
         app.start(Integer.parseInt(System.getenv("HTTP_PORT")));
