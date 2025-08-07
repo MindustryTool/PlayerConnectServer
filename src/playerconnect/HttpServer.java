@@ -64,7 +64,7 @@ public class HttpServer {
             ArrayList<StatsLiveEventData> data = PlayerConnect.relay.rooms
                     .values()
                     .toSeq()
-                    .map(room -> toLiveData(room.stats))
+                    .map(room -> toLiveData(room.id, room.stats))
                     .list();
 
             client.sendEvent(data);
@@ -75,12 +75,12 @@ public class HttpServer {
         app.start(Integer.parseInt(System.getenv("HTTP_PORT")));
 
         Events.on(PlayerConnectEvents.RoomCreatedEvent.class, event -> {
-            StatsLiveEventData stat = toLiveData(event.room.stats);
+            StatsLiveEventData stat = toLiveData(event.room.id, event.room.stats);
             sendUpdateEvent(stat);
         });
 
         Events.on(Packets.StatsPacket.class, event -> {
-            StatsLiveEventData stat = toLiveData(event.data);
+            StatsLiveEventData stat = toLiveData(event.data.roomId, event.data);
             sendUpdateEvent(stat);
         });
 
@@ -116,13 +116,13 @@ public class HttpServer {
         Log.info("Sent remove event for " + roomId);
     }
 
-    private StatsLiveEventData toLiveData(RoomStats data) {
+    private StatsLiveEventData toLiveData(String id, RoomStats data) {
         StatsLiveEventData stat = new StatsLiveEventData();
+        stat.roomId = id;
         stat.mapName = data.mapName;
         stat.name = data.name;
         stat.gamemode = data.gamemode;
         stat.mods = data.mods.list();
-        stat.roomId = data.roomId;
 
         for (Packets.RoomPlayer playerData : data.players) {
             StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
