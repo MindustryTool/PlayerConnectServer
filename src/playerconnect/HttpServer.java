@@ -100,6 +100,8 @@ public class HttpServer {
         for (SseClient client : statsConsumers) {
             client.sendEvent("update", response);
         }
+
+        Log.info("Send update event: " + stat);
     }
 
     private void sendRemoveEvent(String roomId) {
@@ -110,6 +112,8 @@ public class HttpServer {
         for (SseClient client : statsConsumers) {
             client.sendEvent("remove", response);
         }
+
+        Log.info("Sent remove event for " + roomId);
     }
 
     private StatsLiveEventData toLiveData(RoomStats data) {
@@ -119,7 +123,7 @@ public class HttpServer {
         stat.gamemode = data.gamemode;
         stat.mods = data.mods.list();
         stat.roomId = data.roomId;
-        
+
         for (Packets.RoomPlayer playerData : data.players) {
             StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
             player.name = playerData.name;
