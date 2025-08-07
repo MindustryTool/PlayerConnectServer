@@ -80,7 +80,7 @@ public class HttpServer {
         });
 
         Events.on(Packets.StatsPacket.class, event -> {
-            StatsLiveEventData stat = toLiveData(event.data.roomId, event.data);
+            StatsLiveEventData stat = toLiveData(event.roomId, event.data);
             sendUpdateEvent(stat);
         });
 
