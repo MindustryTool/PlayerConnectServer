@@ -144,9 +144,12 @@ public class HttpServer {
     }
 
     public static class StatsLiveEventData {
+        public String name = "";
+        public String status = "";
+        public boolean isPrivate = false;
+        public boolean isSecured = false;
         public ArrayList<StatsLiveEventPlayerData> players = new ArrayList<>();
         public String mapName = "unknown";
-        public String name = "";
         public String gamemode = Gamemode.survival.name();
         public ArrayList<String> mods = new ArrayList<>();
     }
