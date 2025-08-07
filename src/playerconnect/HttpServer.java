@@ -61,7 +61,7 @@ public class HttpServer {
                 statsConsumers.remove(client);
             });
 
-            ArrayList<StatsLiveEventData> data = PlayerConnect.relay.rooms
+            ArrayList<StatsLiveEvent> data = PlayerConnect.relay.rooms
                     .values()
                     .toSeq()
                     .map(room -> toLiveData(room.id, room.stats))
@@ -75,13 +75,11 @@ public class HttpServer {
         app.start(Integer.parseInt(System.getenv("HTTP_PORT")));
 
         Events.on(PlayerConnectEvents.RoomCreatedEvent.class, event -> {
-            StatsLiveEventData stat = toLiveData(event.room.id, event.room.stats);
-            sendUpdateEvent(stat);
+            sendUpdateEvent(toLiveData(event.room.id, event.room.stats));
         });
 
         Events.on(Packets.StatsPacket.class, event -> {
-            StatsLiveEventData stat = toLiveData(event.roomId, event.data);
-            sendUpdateEvent(stat);
+            sendUpdateEvent(toLiveData(event.roomId, event.data));
         });
 
         Events.on(RoomClosedEvent.class, event -> {
@@ -93,8 +91,9 @@ public class HttpServer {
         }, 0, 10, TimeUnit.SECONDS);
     }
 
-    private void sendUpdateEvent(StatsLiveEventData stat) {
-        ArrayList<StatsLiveEventData> response = new ArrayList<>();
+    private void sendUpdateEvent(StatsLiveEvent stat) {
+        ArrayList<StatsLiveEvent> response = new ArrayList<>();
+
         response.add(stat);
 
         for (SseClient client : statsConsumers) {
@@ -116,22 +115,32 @@ public class HttpServer {
         Log.info("Sent remove event for " + roomId);
     }
 
-    private StatsLiveEventData toLiveData(String id, RoomStats data) {
-        StatsLiveEventData stat = new StatsLiveEventData();
-        stat.roomId = id;
-        stat.mapName = data.mapName;
-        stat.name = data.name;
-        stat.gamemode = data.gamemode;
-        stat.mods = data.mods.list();
+    private StatsLiveEvent toLiveData(String id, RoomStats stats) {
+        StatsLiveEvent response = new StatsLiveEvent();
 
-        for (Packets.RoomPlayer playerData : data.players) {
+        StatsLiveEventData data = new StatsLiveEventData();
+
+        data.mapName = stats.mapName;
+        data.name = stats.name;
+        data.gamemode = stats.gamemode;
+        data.mods = stats.mods.list();
+
+        for (Packets.RoomPlayer playerData : stats.players) {
             StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
             player.name = playerData.name;
             player.locale = playerData.locale;
-            stat.players.add(player);
+            data.players.add(player);
         }
 
-        return stat;
+        response.roomId = id;
+        response.data = data;
+
+        return response;
+    }
+
+    public static class StatsLiveEvent {
+        public String roomId = null;
+        public StatsLiveEventData data;
     }
 
     public static class StatsLiveEventData {
@@ -140,7 +149,6 @@ public class HttpServer {
         public String name = "";
         public String gamemode = Gamemode.survival.name();
         public ArrayList<String> mods = new ArrayList<>();
-        public String roomId = null;
     }
 
     public static class StatsLiveEventPlayerData {
