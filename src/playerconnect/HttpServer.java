@@ -145,7 +145,7 @@ public class HttpServer {
 
     public static class StatsLiveEventData {
         public String name = "";
-        public String status = "";
+        public String status = "UP";
         public boolean isPrivate = false;
         public boolean isSecured = false;
         public ArrayList<StatsLiveEventPlayerData> players = new ArrayList<>();
