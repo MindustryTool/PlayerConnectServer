@@ -67,7 +67,7 @@ public class HttpServer {
                     .map(room -> toLiveData(room.id, room.stats))
                     .list();
 
-            client.sendEvent(data);
+            client.sendEvent("update", data);
 
             statsConsumers.add(client);
         });
