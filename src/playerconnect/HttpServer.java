@@ -119,7 +119,7 @@ public class HttpServer {
         stat.gamemode = data.gamemode;
         stat.mods = data.mods.list();
         stat.roomId = data.roomId;
-
+        
         for (Packets.RoomPlayer playerData : data.players) {
             StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
             player.name = playerData.name;
