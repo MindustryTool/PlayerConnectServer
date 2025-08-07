@@ -66,7 +66,10 @@ public class NetworkRelay extends Server implements NetListener {
 
     public void closeRooms() {
         try {
-            rooms.values().forEach(r -> r.close(Packets.RoomClosedPacket.CloseReason.serverClosed));
+            rooms.values().forEach(r -> {
+                r.close(Packets.RoomClosedPacket.CloseReason.serverClosed);
+                Events.fire(new PlayerConnectEvents.RoomClosedEvent(r));
+            });
         } catch (Throwable ignored) {
         }
         rooms.clear();
@@ -111,6 +114,7 @@ public class NetworkRelay extends Server implements NetListener {
         if (room != null) {
             room.disconnected(connection, reason);
             // Remove the room if it was the host
+
             if (connection == room.host) {
                 rooms.remove(room.id);
                 Log.info("Room @ closed because connection @ (the host) has disconnected.", room.id,
@@ -146,6 +150,12 @@ public class NetworkRelay extends Server implements NetListener {
             Log.warn("Connection @ disconnected for packet spamming.", Utils.toString(connection));
             Events.fire(new PlayerConnectEvents.ClientKickedEvent(connection));
 
+        } else if (object instanceof Packets.StatsPacket) {
+            Packets.StatsPacket statsPacket = (Packets.StatsPacket) object;
+            if (room != null) {
+                room.stats = statsPacket.data;
+                Events.fire(statsPacket.data);
+            }
         } else if (object instanceof Packets.RoomJoinPacket) {
             Packets.RoomJoinPacket joinPacket = (Packets.RoomJoinPacket) object;
             // Disconnect from a potential another room.
@@ -188,6 +198,8 @@ public class NetworkRelay extends Server implements NetListener {
 
         } else if (object instanceof Packets.RoomCreationRequestPacket) {
             // Ignore room creation requests when the server is closing
+            Packets.RoomCreationRequestPacket packet = (Packets.RoomCreationRequestPacket) object;
+
             if (isClosed()) {
                 Packets.RoomClosedPacket p = new Packets.RoomClosedPacket();
                 p.reason = Packets.RoomClosedPacket.CloseReason.serverClosed;
@@ -208,12 +220,11 @@ public class NetworkRelay extends Server implements NetListener {
                 return;
             }
 
-            room = new ServerRoom(connection);
+            room = new ServerRoom(connection, packet.data);
             rooms.put(room.id, room);
             room.create();
             Log.info("Room @ created by connection @.", room.id, Utils.toString(connection));
             Events.fire(new PlayerConnectEvents.RoomCreatedEvent(room));
-
 
         } else if (object instanceof Packets.RoomClosureRequestPacket) {
             // Only room host can close the room

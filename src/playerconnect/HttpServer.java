@@ -1,6 +1,7 @@
 package playerconnect;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executors;
@@ -16,7 +17,9 @@ import io.javalin.Javalin;
 import io.javalin.json.JavalinJackson;
 import io.javalin.plugin.bundled.RouteOverviewPlugin;
 import mindustry.game.Gamemode;
+import playerconnect.PlayerConnectEvents.RoomClosedEvent;
 import playerconnect.shared.Packets;
+import playerconnect.shared.Packets.RoomStats;
 import io.javalin.http.sse.SseClient;
 
 public class HttpServer {
@@ -61,13 +64,8 @@ public class HttpServer {
             ArrayList<StatsLiveEventData> data = PlayerConnect.relay.rooms
                     .values()
                     .toSeq()
-                    .map(room -> {
-                        StatsLiveEventData response = new StatsLiveEventData();
-                        response.roomId = room.id;
-                        response.name = room.id;
-
-                        return response;
-                    }).list();
+                    .map(room -> toLiveData(room.stats))
+                    .list();
 
             client.sendEvent(data);
 
@@ -77,26 +75,17 @@ public class HttpServer {
         app.start(Integer.parseInt(System.getenv("HTTP_PORT")));
 
         Events.on(PlayerConnectEvents.RoomCreatedEvent.class, event -> {
-            StatsLiveEventData stat = new StatsLiveEventData();
-            stat.roomId = event.room.id;
-            sendStat(stat);
+            StatsLiveEventData stat = toLiveData(event.room.stats);
+            sendUpdateEvent(stat);
         });
 
         Events.on(Packets.StatsPacket.class, event -> {
-            StatsLiveEventData stat = new StatsLiveEventData();
-            stat.mapName = event.data.mapName;
-            stat.name = event.data.name;
-            stat.gamemode = event.data.gamemode;
-            stat.mods = event.data.mods.list();
-            stat.roomId = event.data.roomId;
+            StatsLiveEventData stat = toLiveData(event.data);
+            sendUpdateEvent(stat);
+        });
 
-            for (Packets.StatsPacketPlayerData playerData : event.data.players) {
-                StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
-                player.name = playerData.name;
-                player.locale = playerData.locale;
-                stat.players.add(player);
-            }
-            sendStat(stat);
+        Events.on(RoomClosedEvent.class, event -> {
+            sendRemoveEvent(event.room.id);
         });
 
         scheduler.scheduleWithFixedDelay(() -> {
@@ -104,13 +93,41 @@ public class HttpServer {
         }, 0, 10, TimeUnit.SECONDS);
     }
 
-    private void sendStat(StatsLiveEventData stat) {
+    private void sendUpdateEvent(StatsLiveEventData stat) {
         ArrayList<StatsLiveEventData> response = new ArrayList<>();
         response.add(stat);
 
         for (SseClient client : statsConsumers) {
-            client.sendEvent(response);
+            client.sendEvent("update", response);
         }
+    }
+
+    private void sendRemoveEvent(String roomId) {
+        HashMap<String, String> response = new HashMap<>();
+
+        response.put("roomId", roomId);
+
+        for (SseClient client : statsConsumers) {
+            client.sendEvent("remove", response);
+        }
+    }
+
+    private StatsLiveEventData toLiveData(RoomStats data) {
+        StatsLiveEventData stat = new StatsLiveEventData();
+        stat.mapName = data.mapName;
+        stat.name = data.name;
+        stat.gamemode = data.gamemode;
+        stat.mods = data.mods.list();
+        stat.roomId = data.roomId;
+
+        for (Packets.RoomPlayer playerData : data.players) {
+            StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
+            player.name = playerData.name;
+            player.locale = playerData.locale;
+            stat.players.add(player);
+        }
+
+        return stat;
     }
 
     public static class StatsLiveEventData {
