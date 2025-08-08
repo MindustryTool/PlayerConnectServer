@@ -131,9 +131,6 @@ public class NetworkRelay extends Server implements NetListener {
     @Override
     public void received(Connection connection, Object object) {
         try {
-
-            Log.info(object);
-
             if (!(connection.getArbitraryData() instanceof Ratekeeper) || (object instanceof FrameworkMessage))
                 return;
 
