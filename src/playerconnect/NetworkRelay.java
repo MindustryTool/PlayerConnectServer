@@ -156,7 +156,7 @@ public class NetworkRelay extends Server implements NetListener {
                 Packets.StatsPacket statsPacket = (Packets.StatsPacket) object;
                 if (room != null) {
                     room.stats = statsPacket.data;
-                    Events.fire(statsPacket.data);
+                    Events.fire(statsPacket);
                 }
             } else if (object instanceof Packets.RoomJoinPacket) {
                 Packets.RoomJoinPacket joinPacket = (Packets.RoomJoinPacket) object;
