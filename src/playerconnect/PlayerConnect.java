@@ -5,6 +5,7 @@ import java.util.concurrent.Executors;
 
 import arc.Events;
 import arc.util.Log;
+import arc.util.Log.LogLevel;
 
 public class PlayerConnect {
     public static final NetworkRelay relay = new NetworkRelay();
@@ -13,6 +14,7 @@ public class PlayerConnect {
 
     public static void main(String[] args) {
         try {
+            Log.level = LogLevel.debug;
             int port = Integer.parseInt(System.getenv("PORT"));
 
             if (port < 0 || port > 0xffff)
