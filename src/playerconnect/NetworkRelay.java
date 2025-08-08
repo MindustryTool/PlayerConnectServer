@@ -78,6 +78,7 @@ public class NetworkRelay extends Server implements NetListener {
     @Override
     public void connected(Connection connection) {
         if (isClosed()) {
+            Log.info("Connection @ denied, server closed.", Utils.toString(connection));
             connection.close(DcReason.closed);
             return;
         }
@@ -171,6 +172,8 @@ public class NetworkRelay extends Server implements NetListener {
                                 Packets.Message2Packet.MessageType.alreadyHosting));
                         return;
                     }
+                    // Disconnect from the room
+                    Log.info("Connection @ left the room @ when trying to join", Utils.toString(connection), room.id);
                     room.disconnected(connection, DcReason.closed);
                 }
 
