@@ -14,15 +14,17 @@ public class ServerRoom implements NetListener {
 
     public final String id;
     public final Connection host;
+    public final String password;
     /** Using IntMap instead of Seq for faster search */
     public final IntMap<Connection> clients = new IntMap<>();
     private boolean isClosed;
     public Packets.RoomStats stats;
 
-    public ServerRoom(Connection host, Packets.RoomStats stats) {
+    public ServerRoom(Connection host, String password, Packets.RoomStats stats) {
         this.id = UUID.randomUUID().toString();
         this.host = host;
         this.stats = stats;
+        this.password = password;
     }
 
     @Override

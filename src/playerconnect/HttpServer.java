@@ -64,7 +64,7 @@ public class HttpServer {
             ArrayList<StatsLiveEvent> data = PlayerConnect.relay.rooms
                     .values()
                     .toSeq()
-                    .map(room -> toLiveData(room.id, room.stats))
+                    .map(room -> toLiveData(room, room.stats))
                     .list();
 
             client.sendEvent("update", data);
@@ -75,11 +75,17 @@ public class HttpServer {
         app.start(Integer.parseInt(System.getenv("HTTP_PORT")));
 
         Events.on(PlayerConnectEvents.RoomCreatedEvent.class, event -> {
-            sendUpdateEvent(toLiveData(event.room.id, event.room.stats));
+            sendUpdateEvent(toLiveData(event.room, event.room.stats));
         });
 
         Events.on(Packets.StatsPacket.class, event -> {
-            sendUpdateEvent(toLiveData(event.roomId, event.data));
+            ServerRoom room = PlayerConnect.relay.rooms.get(event.roomId);
+
+            if (room != null) {
+                sendUpdateEvent(toLiveData(room, event.data));
+            } else {
+                Log.warn("Update stats for non-existent room");
+            }
         });
 
         Events.on(RoomClosedEvent.class, event -> {
@@ -115,7 +121,7 @@ public class HttpServer {
         Log.info("Sent remove event for " + roomId);
     }
 
-    private StatsLiveEvent toLiveData(String id, RoomStats stats) {
+    private StatsLiveEvent toLiveData(ServerRoom room, RoomStats stats) {
         StatsLiveEvent response = new StatsLiveEvent();
 
         StatsLiveEventData data = new StatsLiveEventData();
@@ -124,6 +130,7 @@ public class HttpServer {
         data.name = stats.name;
         data.gamemode = stats.gamemode;
         data.mods = stats.mods.list();
+        data.isSecured = room.password != null && room.password.isEmpty();
 
         for (Packets.RoomPlayer playerData : stats.players) {
             StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
@@ -132,7 +139,7 @@ public class HttpServer {
             data.players.add(player);
         }
 
-        response.roomId = id;
+        response.roomId = room.id;
         response.data = data;
 
         return response;

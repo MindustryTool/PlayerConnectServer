@@ -174,6 +174,16 @@ public class NetworkRelay extends Server implements NetListener {
 
             room = get(((Packets.RoomJoinPacket) object).roomId);
             if (room != null) {
+                if (!room.password.equals(joinPacket.password)) {
+                    Packets.MessagePacket p = new Packets.MessagePacket();
+                    p.message = "Wrong password";
+                    connection.sendTCP(p);
+                    connection.close(DcReason.error);
+                    Log.info("Connection @ tried to join the room @ with wrong password.",
+                            Utils.toString(connection), room.id);
+                    return;
+                }
+
                 room.connected(connection);
                 Log.info("Connection @ joined the room @.", Utils.toString(connection), room.id);
 
@@ -220,7 +230,7 @@ public class NetworkRelay extends Server implements NetListener {
                 return;
             }
 
-            room = new ServerRoom(connection, packet.data);
+            room = new ServerRoom(connection, packet.password, packet.data);
             rooms.put(room.id, room);
             room.create();
             Log.info("Room @ created by connection @.", room.id, Utils.toString(connection));
