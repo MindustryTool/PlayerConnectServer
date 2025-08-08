@@ -75,7 +75,11 @@ public class HttpServer {
         app.start(Integer.parseInt(System.getenv("HTTP_PORT")));
 
         Events.on(PlayerConnectEvents.RoomCreatedEvent.class, event -> {
-            sendUpdateEvent(toLiveData(event.room, event.room.stats));
+            try {
+                sendUpdateEvent(toLiveData(event.room, event.room.stats));
+            } catch (Exception error) {
+                Log.err("Failed to send initial room stats", error);
+            }
         });
 
         Events.on(Packets.StatsPacket.class, event -> {
