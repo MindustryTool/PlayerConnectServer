@@ -179,7 +179,7 @@ public class ServerRoom implements NetListener {
         clients.values().forEach(c -> c.close(DcReason.closed));
         clients.clear();
 
-        Log.info("Room @ closed, reason ", id , reason);
+        Log.info("Room @ closed, reason @", id , reason);
     }
 
     /** Checks if the connection is the room host or one of his client */
