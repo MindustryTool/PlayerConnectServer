@@ -6,7 +6,6 @@ import java.util.concurrent.Executors;
 import arc.Events;
 import arc.net.ArcNet;
 import arc.util.Log;
-import arc.util.Log.LogLevel;
 
 public class PlayerConnect {
     public static final NetworkRelay relay = new NetworkRelay();
@@ -15,7 +14,6 @@ public class PlayerConnect {
 
     public static void main(String[] args) {
         try {
-            Log.level = LogLevel.debug;
             ArcNet.errorHandler = (error) -> Log.err(error);
             int port = Integer.parseInt(System.getenv("PORT"));
 
