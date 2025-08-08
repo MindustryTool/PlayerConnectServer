@@ -129,188 +129,193 @@ public class NetworkRelay extends Server implements NetListener {
 
     @Override
     public void received(Connection connection, Object object) {
-        if (!(connection.getArbitraryData() instanceof Ratekeeper) || (object instanceof FrameworkMessage))
-            return;
+        try {
 
-        notifiedIdle.remove(connection.getID());
+            if (!(connection.getArbitraryData() instanceof Ratekeeper) || (object instanceof FrameworkMessage))
+                return;
 
-        Ratekeeper rate = (Ratekeeper) connection.getArbitraryData();
-        ServerRoom room = find(connection);
+            notifiedIdle.remove(connection.getID());
 
-        // Simple packet spam protection, ignored for room hosts
-        if ((room == null || room.host != connection) && Configs.SPAM_LIMIT > 0
-                && !rate.allow(3000L, Configs.SPAM_LIMIT)) {
+            Ratekeeper rate = (Ratekeeper) connection.getArbitraryData();
+            ServerRoom room = find(connection);
 
-            if (room != null) {
-                room.message(Packets.Message2Packet.MessageType.packetSpamming);
-                room.disconnected(connection, DcReason.closed);
-            }
+            // Simple packet spam protection, ignored for room hosts
+            if ((room == null || room.host != connection) && Configs.SPAM_LIMIT > 0
+                    && !rate.allow(3000L, Configs.SPAM_LIMIT)) {
 
-            connection.close(DcReason.closed);
-            Log.warn("Connection @ disconnected for packet spamming.", Utils.toString(connection));
-            Events.fire(new PlayerConnectEvents.ClientKickedEvent(connection));
+                if (room != null) {
+                    room.message(Packets.Message2Packet.MessageType.packetSpamming);
+                    room.disconnected(connection, DcReason.closed);
+                }
 
-        } else if (object instanceof Packets.StatsPacket) {
-            Packets.StatsPacket statsPacket = (Packets.StatsPacket) object;
-            if (room != null) {
-                room.stats = statsPacket.data;
-                Events.fire(statsPacket.data);
-            }
-        } else if (object instanceof Packets.RoomJoinPacket) {
-            Packets.RoomJoinPacket joinPacket = (Packets.RoomJoinPacket) object;
-            // Disconnect from a potential another room.
-            if (room != null) {
-                // Ignore if it's the host of another room
-                if (room.host == connection) {
+                connection.close(DcReason.closed);
+                Log.warn("Connection @ disconnected for packet spamming.", Utils.toString(connection));
+                Events.fire(new PlayerConnectEvents.ClientKickedEvent(connection));
+
+            } else if (object instanceof Packets.StatsPacket) {
+                Packets.StatsPacket statsPacket = (Packets.StatsPacket) object;
+                if (room != null) {
+                    room.stats = statsPacket.data;
+                    Events.fire(statsPacket.data);
+                }
+            } else if (object instanceof Packets.RoomJoinPacket) {
+                Packets.RoomJoinPacket joinPacket = (Packets.RoomJoinPacket) object;
+                // Disconnect from a potential another room.
+                if (room != null) {
+                    // Ignore if it's the host of another room
+                    if (room.host == connection) {
+                        room.message(Packets.Message2Packet.MessageType.alreadyHosting);
+                        Log.warn("Connection @ tried to join the room @ but is already hosting the room @.",
+                                Utils.toString(connection), joinPacket.roomId, room.id);
+                        Events.fire(new PlayerConnectEvents.ActionDeniedEvent(connection,
+                                Packets.Message2Packet.MessageType.alreadyHosting));
+                        return;
+                    }
+                    room.disconnected(connection, DcReason.closed);
+                }
+
+                room = get(((Packets.RoomJoinPacket) object).roomId);
+                if (room != null) {
+                    if (!room.password.equals(joinPacket.password)) {
+                        Packets.MessagePacket p = new Packets.MessagePacket();
+                        p.message = "Wrong password";
+                        connection.sendTCP(p);
+                        connection.close(DcReason.error);
+                        Log.info("Connection @ tried to join the room @ with wrong password.",
+                                Utils.toString(connection), room.id);
+                        return;
+                    }
+
+                    room.connected(connection);
+                    Log.info("Connection @ joined the room @.", Utils.toString(connection), room.id);
+
+                    // Send the queued packets of connections to room host
+                    ByteBuffer[] queue = packetQueue.remove(connection.getID());
+                    if (queue != null) {
+                        Log.debug("Sending queued packets of connection @ to room host.",
+                                Utils.toString(connection));
+                        for (int i = 0; i < queue.length; i++) {
+                            if (queue[i] != null)
+                                room.received(connection, queue[i]);
+                        }
+                    }
+
+                    Events.fire(new PlayerConnectEvents.ConnectionJoinedEvent(connection, room));
+                } else {
+                    connection.close(DcReason.error);
+                    Log.info("Connection @ tried to join a non-existent room @.",
+                            Utils.toString(connection), joinPacket.roomId);
+                    Log.info("Room list: @", rooms.values().toSeq().map(r -> r.id).toString());
+                }
+
+            } else if (object instanceof Packets.RoomCreationRequestPacket) {
+                // Ignore room creation requests when the server is closing
+                Packets.RoomCreationRequestPacket packet = (Packets.RoomCreationRequestPacket) object;
+
+                if (isClosed()) {
+                    Packets.RoomClosedPacket p = new Packets.RoomClosedPacket();
+                    p.reason = Packets.RoomClosedPacket.CloseReason.serverClosed;
+                    connection.sendTCP(p);
+                    connection.close(DcReason.error);
+                    Events.fire(new PlayerConnectEvents.RoomCreationRejectedEvent(connection, p.reason));
+                    Log.info("Ignore room creation, server is closing");
+                    return;
+                }
+
+                // Ignore if the connection is already in a room or hold one
+                if (room != null) {
                     room.message(Packets.Message2Packet.MessageType.alreadyHosting);
-                    Log.warn("Connection @ tried to join the room @ but is already hosting the room @.",
-                            Utils.toString(connection), joinPacket.roomId, room.id);
+                    Log.warn("Connection @ tried to create a room but is already hosting the room @.",
+                            Utils.toString(connection), room.id);
                     Events.fire(new PlayerConnectEvents.ActionDeniedEvent(connection,
                             Packets.Message2Packet.MessageType.alreadyHosting));
                     return;
                 }
-                room.disconnected(connection, DcReason.closed);
-            }
 
-            room = get(((Packets.RoomJoinPacket) object).roomId);
-            if (room != null) {
-                if (!room.password.equals(joinPacket.password)) {
-                    Packets.MessagePacket p = new Packets.MessagePacket();
-                    p.message = "Wrong password";
-                    connection.sendTCP(p);
-                    connection.close(DcReason.error);
-                    Log.info("Connection @ tried to join the room @ with wrong password.",
+                room = new ServerRoom(connection, packet.password, packet.data);
+                rooms.put(room.id, room);
+                room.create();
+                Log.info("Room @ created by connection @.", room.id, Utils.toString(connection));
+                Events.fire(new PlayerConnectEvents.RoomCreatedEvent(room));
+
+            } else if (object instanceof Packets.RoomClosureRequestPacket) {
+                // Only room host can close the room
+                if (room == null)
+                    return;
+                if (room.host != connection) {
+                    room.message(Packets.Message2Packet.MessageType.roomClosureDenied);
+                    Log.warn("Connection @ tried to close the room @ but is not the host.",
+                            Utils.toString(connection),
+                            room.id);
+                    Events.fire(new PlayerConnectEvents.ActionDeniedEvent(connection,
+                            Packets.Message2Packet.MessageType.roomClosureDenied));
+                    return;
+                }
+
+                rooms.remove(room.id);
+                room.close();
+                Log.info("Room @ closed by connection @ (the host).", room.id, Utils.toString(connection));
+                Events.fire(new PlayerConnectEvents.RoomClosedEvent(room));
+
+            } else if (object instanceof Packets.ConnectionClosedPacket) {
+                // Only room host can request a connection closing
+                if (room == null)
+                    return;
+
+                Packets.ConnectionClosedPacket closePacket = (Packets.ConnectionClosedPacket) object;
+
+                if (room.host != connection) {
+
+                    room.message(Packets.Message2Packet.MessageType.conClosureDenied);
+                    Log.warn("Connection @ tried to close the connection @ but is not the host of room @.",
+                            Utils.toString(connection), closePacket.connectionId, room.id);
+                    Events.fire(new PlayerConnectEvents.ActionDeniedEvent(connection,
+                            Packets.Message2Packet.MessageType.conClosureDenied));
+                    return;
+                }
+
+                int connectionId = closePacket.connectionId;
+                Connection con = arc.util.Structs.find(getConnections(), c -> c.getID() == connectionId);
+                DcReason reason = ((Packets.ConnectionClosedPacket) object).reason;
+
+                // Ignore when trying to close itself or closing one that not in the same room
+                if (con == connection || !room.contains(con)) {
+                    Log.warn("Connection @ (room @) tried to close a connection from another room.",
                             Utils.toString(connection), room.id);
                     return;
                 }
 
-                room.connected(connection);
-                Log.info("Connection @ joined the room @.", Utils.toString(connection), room.id);
+                if (con != null) {
+                    Log.info("Connection @ (room @) closed the connection @.", Utils.toString(connection), room.id,
+                            Utils.toString(con));
+                    room.disconnectedQuietly(con, reason);
+                    con.close(reason);
+                    // An event for this is useless, #disconnected() will trigger it
+                }
 
-                // Send the queued packets of connections to room host
-                ByteBuffer[] queue = packetQueue.remove(connection.getID());
-                if (queue != null) {
-                    Log.debug("Sending queued packets of connection @ to room host.",
-                            Utils.toString(connection));
-                    for (int i = 0; i < queue.length; i++) {
-                        if (queue[i] != null)
-                            room.received(connection, queue[i]);
+                // Ignore if the connection is not in a room
+            } else if (room != null) {
+                if (room.host == connection && (object instanceof Packets.ConnectionWrapperPacket))
+                    notifiedIdle.remove(((Packets.ConnectionWrapperPacket) object).connectionId);
+
+                room.received(connection, object);
+
+                // Puts in queue; if full, future packets will be ignored.
+            } else if (object instanceof ByteBuffer) {
+                ByteBuffer[] queue = packetQueue.get(connection.getID(), () -> new ByteBuffer[packetQueueSize]);
+                ByteBuffer buffer = (ByteBuffer) object;
+
+                for (int i = 0; i < queue.length; i++) {
+                    if (queue[i] == null) {
+                        queue[i] = (ByteBuffer) ByteBuffer.allocate(buffer.remaining()).put(buffer).rewind();
+                        break;
                     }
                 }
-
-                Events.fire(new PlayerConnectEvents.ConnectionJoinedEvent(connection, room));
             } else {
-                connection.close(DcReason.error);
-                Log.info("Connection @ tried to join a non-existent room @.",
-                        Utils.toString(connection), joinPacket.roomId);
-                Log.info("Room list: @", rooms.values().toSeq().map(r -> r.id).toString());
+                Log.warn("Unhandled packet: @", object);
             }
-
-        } else if (object instanceof Packets.RoomCreationRequestPacket) {
-            // Ignore room creation requests when the server is closing
-            Packets.RoomCreationRequestPacket packet = (Packets.RoomCreationRequestPacket) object;
-
-            if (isClosed()) {
-                Packets.RoomClosedPacket p = new Packets.RoomClosedPacket();
-                p.reason = Packets.RoomClosedPacket.CloseReason.serverClosed;
-                connection.sendTCP(p);
-                connection.close(DcReason.error);
-                Events.fire(new PlayerConnectEvents.RoomCreationRejectedEvent(connection, p.reason));
-                Log.info("Ignore room creation, server is closing");
-                return;
-            }
-
-            // Ignore if the connection is already in a room or hold one
-            if (room != null) {
-                room.message(Packets.Message2Packet.MessageType.alreadyHosting);
-                Log.warn("Connection @ tried to create a room but is already hosting the room @.",
-                        Utils.toString(connection), room.id);
-                Events.fire(new PlayerConnectEvents.ActionDeniedEvent(connection,
-                        Packets.Message2Packet.MessageType.alreadyHosting));
-                return;
-            }
-
-            room = new ServerRoom(connection, packet.password, packet.data);
-            rooms.put(room.id, room);
-            room.create();
-            Log.info("Room @ created by connection @.", room.id, Utils.toString(connection));
-            Events.fire(new PlayerConnectEvents.RoomCreatedEvent(room));
-
-        } else if (object instanceof Packets.RoomClosureRequestPacket) {
-            // Only room host can close the room
-            if (room == null)
-                return;
-            if (room.host != connection) {
-                room.message(Packets.Message2Packet.MessageType.roomClosureDenied);
-                Log.warn("Connection @ tried to close the room @ but is not the host.",
-                        Utils.toString(connection),
-                        room.id);
-                Events.fire(new PlayerConnectEvents.ActionDeniedEvent(connection,
-                        Packets.Message2Packet.MessageType.roomClosureDenied));
-                return;
-            }
-
-            rooms.remove(room.id);
-            room.close();
-            Log.info("Room @ closed by connection @ (the host).", room.id, Utils.toString(connection));
-            Events.fire(new PlayerConnectEvents.RoomClosedEvent(room));
-
-        } else if (object instanceof Packets.ConnectionClosedPacket) {
-            // Only room host can request a connection closing
-            if (room == null)
-                return;
-
-            Packets.ConnectionClosedPacket closePacket = (Packets.ConnectionClosedPacket) object;
-
-            if (room.host != connection) {
-
-                room.message(Packets.Message2Packet.MessageType.conClosureDenied);
-                Log.warn("Connection @ tried to close the connection @ but is not the host of room @.",
-                        Utils.toString(connection), closePacket.connectionId, room.id);
-                Events.fire(new PlayerConnectEvents.ActionDeniedEvent(connection,
-                        Packets.Message2Packet.MessageType.conClosureDenied));
-                return;
-            }
-
-            int connectionId = closePacket.connectionId;
-            Connection con = arc.util.Structs.find(getConnections(), c -> c.getID() == connectionId);
-            DcReason reason = ((Packets.ConnectionClosedPacket) object).reason;
-
-            // Ignore when trying to close itself or closing one that not in the same room
-            if (con == connection || !room.contains(con)) {
-                Log.warn("Connection @ (room @) tried to close a connection from another room.",
-                        Utils.toString(connection), room.id);
-                return;
-            }
-
-            if (con != null) {
-                Log.info("Connection @ (room @) closed the connection @.", Utils.toString(connection), room.id,
-                        Utils.toString(con));
-                room.disconnectedQuietly(con, reason);
-                con.close(reason);
-                // An event for this is useless, #disconnected() will trigger it
-            }
-
-            // Ignore if the connection is not in a room
-        } else if (room != null) {
-            if (room.host == connection && (object instanceof Packets.ConnectionWrapperPacket))
-                notifiedIdle.remove(((Packets.ConnectionWrapperPacket) object).connectionId);
-
-            room.received(connection, object);
-
-            // Puts in queue; if full, future packets will be ignored.
-        } else if (object instanceof ByteBuffer) {
-            ByteBuffer[] queue = packetQueue.get(connection.getID(), () -> new ByteBuffer[packetQueueSize]);
-            ByteBuffer buffer = (ByteBuffer) object;
-
-            for (int i = 0; i < queue.length; i++) {
-                if (queue[i] == null) {
-                    queue[i] = (ByteBuffer) ByteBuffer.allocate(buffer.remaining()).put(buffer).rewind();
-                    break;
-                }
-            }
-        } else {
-            Log.warn("Unhandled packet: @", object);
+        } catch (Exception error) {
+            Log.err("Failed to handle: " + object, error);
         }
     }
 

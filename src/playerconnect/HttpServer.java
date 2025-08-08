@@ -79,12 +79,16 @@ public class HttpServer {
         });
 
         Events.on(Packets.StatsPacket.class, event -> {
-            ServerRoom room = PlayerConnect.relay.rooms.get(event.roomId);
+            try {
+                ServerRoom room = PlayerConnect.relay.rooms.get(event.roomId);
 
-            if (room != null) {
-                sendUpdateEvent(toLiveData(room, event.data));
-            } else {
-                Log.warn("Update stats for non-existent room");
+                if (room != null) {
+                    sendUpdateEvent(toLiveData(room, event.data));
+                } else {
+                    Log.warn("Update stats for non-existent room");
+                }
+            } catch (Exception error) {
+                Log.err("Failed to send room stats", error);
             }
         });
 
@@ -130,7 +134,7 @@ public class HttpServer {
         data.name = stats.name;
         data.gamemode = stats.gamemode;
         data.mods = stats.mods.list();
-        data.isSecured = room.password != null && room.password.isEmpty();
+        data.isSecured = room.password != null && !room.password.isEmpty();
 
         for (Packets.RoomPlayer playerData : stats.players) {
             StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
