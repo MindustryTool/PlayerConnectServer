@@ -106,6 +106,8 @@ public class HttpServer {
     }
 
     private void sendUpdateEvent(StatsLiveEvent stat) {
+        Log.info("Send update event: " + stat);
+
         ArrayList<StatsLiveEvent> response = new ArrayList<>();
 
         response.add(stat);
@@ -113,11 +115,11 @@ public class HttpServer {
         for (SseClient client : statsConsumers) {
             client.sendEvent("update", response);
         }
-
-        Log.info("Send update event: " + stat);
     }
 
     private void sendRemoveEvent(String roomId) {
+        Log.info("Sent remove event for " + roomId);
+
         HashMap<String, String> response = new HashMap<>();
 
         response.put("roomId", roomId);
@@ -125,8 +127,6 @@ public class HttpServer {
         for (SseClient client : statsConsumers) {
             client.sendEvent("remove", response);
         }
-
-        Log.info("Sent remove event for " + roomId);
     }
 
     private StatsLiveEvent toLiveData(ServerRoom room, RoomStats stats) {
