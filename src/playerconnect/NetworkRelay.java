@@ -179,7 +179,7 @@ public class NetworkRelay extends Server implements NetListener {
                 room = get(((Packets.RoomJoinPacket) object).roomId);
                 if (room != null) {
                     if (!room.password.equals(joinPacket.password)) {
-                        Packets.MessagePacket p = new Packets.MessagePacket();
+                        Packets.PopupPacket p = new Packets.PopupPacket();
                         p.message = "Wrong password";
                         connection.sendTCP(p);
                         connection.close(DcReason.error);
