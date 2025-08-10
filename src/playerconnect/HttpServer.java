@@ -22,6 +22,8 @@ import playerconnect.shared.Packets;
 import playerconnect.shared.Packets.RoomStats;
 import io.javalin.http.sse.SseClient;
 
+import lombok.Data;
+
 public class HttpServer {
 
     private Javalin app;
@@ -139,6 +141,8 @@ public class HttpServer {
         data.gamemode = stats.gamemode;
         data.mods = stats.mods.list();
         data.isSecured = room.password != null && !room.password.isEmpty();
+        data.locale = stats.locale;
+        data.version = stats.version;
 
         for (Packets.RoomPlayer playerData : stats.players) {
             StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
@@ -153,6 +157,7 @@ public class HttpServer {
         return response;
     }
 
+    @Data
     public static class StatsLiveEvent {
         public String roomId = null;
         public StatsLiveEventData data;
@@ -167,6 +172,8 @@ public class HttpServer {
         public String mapName = "unknown";
         public String gamemode = Gamemode.survival.name();
         public ArrayList<String> mods = new ArrayList<>();
+        public String locale;
+        public String version;
     }
 
     public static class StatsLiveEventPlayerData {

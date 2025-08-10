@@ -42,7 +42,10 @@ dependencies{
     implementation "com.github.Anuken.Arc:arc-core:$mindustryVersion"
     implementation "com.github.Anuken.Mindustry:core:$mindustryVersion"
 
-
+    compileOnly 'org.projectlombok:lombok:1.18.32'
+    
+    annotationProcessor 'org.projectlombok:lombok:1.18.32'
+    
 	annotationProcessor "com.github.Anuken:jabel:$jabelVersion"
 }
 
