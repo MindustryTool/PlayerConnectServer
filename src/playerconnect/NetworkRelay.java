@@ -182,7 +182,6 @@ public class NetworkRelay extends Server implements NetListener {
                         Packets.PopupPacket p = new Packets.PopupPacket();
                         p.message = "Wrong password";
                         connection.sendTCP(p);
-                        connection.close(DcReason.error);
                         Log.info("Connection @ tried to join the room @ with wrong password.",
                                 Utils.toString(connection), room.id);
                         return;
