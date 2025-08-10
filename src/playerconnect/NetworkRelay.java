@@ -179,8 +179,8 @@ public class NetworkRelay extends Server implements NetListener {
                 room = get(((Packets.RoomJoinPacket) object).roomId);
                 if (room != null) {
                     if (!room.password.equals(joinPacket.password)) {
-                        Packets.PopupPacket p = new Packets.PopupPacket();
-                        p.message = "Wrong password";
+                        mindustry.net.Packets.Disconnect p = new mindustry.net.Packets.Disconnect();
+                        p.reason = "Wrong password";
                         connection.sendTCP(p);
                         Log.info("Connection @ tried to join the room @ with wrong password.",
                                 Utils.toString(connection), room.id);
