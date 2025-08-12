@@ -60,6 +60,7 @@ public class HttpServer {
             client.keepAlive();
 
             client.onClose(() -> {
+                Log.info("Client removed: <" + client.ctx().ip() + ">");
                 statsConsumers.remove(client);
             });
 
@@ -68,6 +69,8 @@ public class HttpServer {
                     .toSeq()
                     .map(room -> toLiveData(room, room.stats))
                     .list();
+
+            Log.info("Client connected <" + client.ctx().ip() + "> sending " + data.size() + " rooms");
 
             client.sendEvent("update", data);
 
@@ -104,7 +107,7 @@ public class HttpServer {
 
         scheduler.scheduleWithFixedDelay(() -> {
             statsConsumers.forEach(client -> client.sendComment("Kept alive"));
-        }, 0, 10, TimeUnit.SECONDS);
+        }, 0, 1, TimeUnit.SECONDS);
     }
 
     private void sendUpdateEvent(StatsLiveEvent stat) {
@@ -143,6 +146,7 @@ public class HttpServer {
         data.isSecured = room.password != null && !room.password.isEmpty();
         data.locale = stats.locale;
         data.version = stats.version;
+        data.createdAt = room.createdAt;
 
         for (Packets.RoomPlayer playerData : stats.players) {
             StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
@@ -158,12 +162,13 @@ public class HttpServer {
     }
 
     @Data
-    public static class StatsLiveEvent {
+    private static class StatsLiveEvent {
         public String roomId = null;
         public StatsLiveEventData data;
     }
 
-    public static class StatsLiveEventData {
+    @Data
+    private static class StatsLiveEventData {
         public String name = "";
         public String status = "UP";
         public boolean isPrivate = false;
@@ -174,9 +179,11 @@ public class HttpServer {
         public ArrayList<String> mods = new ArrayList<>();
         public String locale;
         public String version;
+        public Long createdAt;
     }
 
-    public static class StatsLiveEventPlayerData {
+    @Data
+    private static class StatsLiveEventPlayerData {
         public String name = "";
         public String locale = "en";
     }
