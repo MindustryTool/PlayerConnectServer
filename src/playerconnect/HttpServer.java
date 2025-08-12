@@ -4,9 +4,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -29,7 +26,6 @@ public class HttpServer {
     private Javalin app;
 
     private final Queue<SseClient> statsConsumers = new ConcurrentLinkedQueue<>();
-    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     public HttpServer() {
         app = Javalin.create(config -> {
@@ -104,10 +100,6 @@ public class HttpServer {
         Events.on(RoomClosedEvent.class, event -> {
             sendRemoveEvent(event.room.id);
         });
-
-        scheduler.scheduleWithFixedDelay(() -> {
-            statsConsumers.forEach(client -> client.sendComment("Kept alive"));
-        }, 0, 1, TimeUnit.SECONDS);
     }
 
     private void sendUpdateEvent(StatsLiveEvent stat) {
