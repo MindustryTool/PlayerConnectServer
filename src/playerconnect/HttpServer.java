@@ -4,6 +4,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -26,6 +29,7 @@ public class HttpServer {
     private Javalin app;
 
     private final Queue<SseClient> statsConsumers = new ConcurrentLinkedQueue<>();
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     public HttpServer() {
         app = Javalin.create(config -> {
@@ -56,7 +60,7 @@ public class HttpServer {
             client.keepAlive();
 
             client.onClose(() -> {
-                Log.info("Client removed: <" + client.ctx().ip() + ">");
+                Log.info("Client removed: <" + client + ">");
                 statsConsumers.remove(client);
             });
 
@@ -66,7 +70,7 @@ public class HttpServer {
                     .map(room -> toLiveData(room, room.stats))
                     .list();
 
-            Log.info("Client connected <" + client.ctx().ip() + "> sending " + data.size() + " rooms");
+            Log.info("Client connected <" + client + "> sending " + data.size() + " rooms");
 
             client.sendEvent("update", data);
 
@@ -100,6 +104,10 @@ public class HttpServer {
         Events.on(RoomClosedEvent.class, event -> {
             sendRemoveEvent(event.room.id);
         });
+
+        scheduler.scheduleWithFixedDelay(() -> {
+            statsConsumers.forEach(client -> client.sendComment("Kept alive"));
+        }, 0, 1, TimeUnit.SECONDS);
     }
 
     private void sendUpdateEvent(StatsLiveEvent stat) {
