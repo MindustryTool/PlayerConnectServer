@@ -15,7 +15,7 @@ public class PlayerConnect {
     public static void main(String[] args) {
         try {
             ArcNet.errorHandler = (error) -> Log.err(error);
-            int port = Integer.parseInt(System.getenv("PORT"));
+            int port = Integer.parseInt(System.getenv("PLAYER_CONNECT_PORT"));
 
             if (port < 0 || port > 0xffff)
                 throw new RuntimeException("Invalid port range");

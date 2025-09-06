@@ -77,7 +77,7 @@ public class HttpServer {
             statsConsumers.add(client);
         });
 
-        app.start(Integer.parseInt(System.getenv("HTTP_PORT")));
+        app.start(Integer.parseInt(System.getenv("PLAYER_CONNECT_HTTP_PORT")));
 
         Events.on(PlayerConnectEvents.RoomCreatedEvent.class, event -> {
             try {
