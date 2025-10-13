@@ -77,6 +77,8 @@ public class HttpServer {
             statsConsumers.add(client);
         });
 
+        app.get("ping", ctx -> ctx.result("pong"));
+
         app.start(Integer.parseInt(System.getenv("PLAYER_CONNECT_HTTP_PORT")));
 
         Events.on(PlayerConnectEvents.RoomCreatedEvent.class, event -> {
