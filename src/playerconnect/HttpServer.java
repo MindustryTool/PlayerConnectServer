@@ -54,6 +54,12 @@ public class HttpServer {
                     Log.info("[" + ctx.method().name() + "] " + Math.round(ms) + "ms " + ctx.fullUrl());
                 }
             });
+
+            config.bundledPlugins.enableCors(cors -> {
+                cors.addRule(rules -> {
+                    rules.anyHost();
+                });
+            });
         });
 
         app.sse("rooms", client -> {
