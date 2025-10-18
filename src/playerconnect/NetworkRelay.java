@@ -158,6 +158,7 @@ public class NetworkRelay extends Server implements NetListener {
                 Packets.StatsPacket statsPacket = (Packets.StatsPacket) object;
                 if (room != null) {
                     room.stats = statsPacket.data;
+                    room.ping = System.currentTimeMillis() - statsPacket.data.createdAt;
                     Events.fire(statsPacket);
                 }
             } else if (object instanceof Packets.RoomJoinPacket) {
