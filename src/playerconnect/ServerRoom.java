@@ -1,6 +1,7 @@
 package playerconnect;
 
 import java.nio.ByteBuffer;
+import java.util.Date;
 import java.util.UUID;
 
 import arc.net.Connection;
@@ -27,7 +28,7 @@ public class ServerRoom implements NetListener {
         this.host = host;
         this.stats = stats;
         this.password = password;
-        this.ping = System.currentTimeMillis() - stats.createdAt;
+        this.ping = new Date().getTime() - stats.createdAt;
     }
 
     @Override
