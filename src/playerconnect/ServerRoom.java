@@ -16,11 +16,11 @@ public class ServerRoom implements NetListener {
     public final Connection host;
     public final String password;
     /** Using IntMap instead of Seq for faster search */
-    public final IntMap<Connection> clients = new IntMap<>();
-    private boolean isClosed;
     public Packets.RoomStats stats;
-    public final Long createdAt = System.currentTimeMillis();
     public Long ping = -1L;
+    private boolean isClosed;
+    public final IntMap<Connection> clients = new IntMap<>();
+    public final Long createdAt = System.currentTimeMillis();
 
     public ServerRoom(Connection host, String password, Packets.RoomStats stats) {
         this.id = UUID.randomUUID().toString();
