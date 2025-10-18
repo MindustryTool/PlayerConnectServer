@@ -155,7 +155,7 @@ public class HttpServer {
         data.locale = stats.locale;
         data.version = stats.version;
         data.createdAt = room.createdAt;
-        data.ping = System.currentTimeMillis() - room.ping;
+        data.ping = room.ping;
 
         for (Packets.RoomPlayer playerData : stats.players) {
             StatsLiveEventPlayerData player = new StatsLiveEventPlayerData();
