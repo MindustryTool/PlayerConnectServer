@@ -20,7 +20,7 @@ public class ServerRoom implements NetListener {
     private boolean isClosed;
     public Packets.RoomStats stats;
     public final Long createdAt = System.currentTimeMillis();
-    public Long ping = 0L;
+    public Long ping = -1L;
 
     public ServerRoom(Connection host, String password, Packets.RoomStats stats) {
         this.id = UUID.randomUUID().toString();
