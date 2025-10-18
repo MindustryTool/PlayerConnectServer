@@ -237,6 +237,7 @@ public class NetworkRelay extends Server implements NetListener {
                 }
 
                 room = new ServerRoom(connection, packet.password, packet.data);
+                
                 rooms.put(room.id, room);
                 room.create();
                 Log.info("Room @ created by connection @.", room.id, Utils.toString(connection));

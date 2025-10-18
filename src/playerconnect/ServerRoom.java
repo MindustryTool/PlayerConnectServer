@@ -27,6 +27,7 @@ public class ServerRoom implements NetListener {
         this.host = host;
         this.stats = stats;
         this.password = password;
+        this.ping = System.currentTimeMillis() - stats.createdAt;
     }
 
     @Override
