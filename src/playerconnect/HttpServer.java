@@ -114,31 +114,44 @@ public class HttpServer {
         });
 
         scheduler.scheduleWithFixedDelay(() -> {
-            statsConsumers.forEach(client -> client.sendComment("Kept alive"));
+            try {
+                statsConsumers.forEach(client -> client.sendComment("Kept alive"));
+            } catch (Exception error) {
+                Log.err("Failed to send keep alive comment", error);
+            }
         }, 0, 1, TimeUnit.SECONDS);
     }
 
     private void sendUpdateEvent(StatsLiveEvent stat) {
-        Log.info("Send update event: " + stat);
+        try {
+            Log.info("Send update event: " + stat);
 
-        ArrayList<StatsLiveEvent> response = new ArrayList<>();
+            ArrayList<StatsLiveEvent> response = new ArrayList<>();
 
-        response.add(stat);
+            response.add(stat);
 
-        for (SseClient client : statsConsumers) {
-            client.sendEvent("update", response);
+            for (SseClient client : statsConsumers) {
+                client.sendEvent("update", response);
+            }
+        } catch (Exception error) {
+            Log.err("Failed to send update event", error);
         }
     }
 
     private void sendRemoveEvent(String roomId) {
-        Log.info("Sent remove event for " + roomId);
+        try {
 
-        HashMap<String, String> response = new HashMap<>();
+            Log.info("Sent remove event for " + roomId);
 
-        response.put("roomId", roomId);
+            HashMap<String, String> response = new HashMap<>();
 
-        for (SseClient client : statsConsumers) {
-            client.sendEvent("remove", response);
+            response.put("roomId", roomId);
+
+            for (SseClient client : statsConsumers) {
+                client.sendEvent("remove", response);
+            }
+        } catch (Exception error) {
+            Log.err("Failed to send remove event", error);
         }
     }
 
