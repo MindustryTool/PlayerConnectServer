@@ -12,6 +12,8 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
 import arc.Events;
+import arc.net.DcReason;
+import arc.struct.Seq;
 import arc.util.Log;
 import io.javalin.Javalin;
 import io.javalin.json.JavalinJackson;
@@ -20,6 +22,7 @@ import mindustry.game.Gamemode;
 import playerconnect.PlayerConnectEvents.RoomClosedEvent;
 import playerconnect.shared.Packets;
 import playerconnect.shared.Packets.RoomStats;
+import io.javalin.http.Context;
 import io.javalin.http.sse.SseClient;
 
 import lombok.Data;
@@ -30,6 +33,8 @@ public class HttpServer {
 
     private final Queue<SseClient> statsConsumers = new ConcurrentLinkedQueue<>();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+
+    private final String magicWord = "ditmemay";
 
     public HttpServer() {
         app = Javalin.create(config -> {
@@ -85,6 +90,55 @@ public class HttpServer {
 
         app.get("ping", ctx -> ctx.result("pong"));
 
+        app.get("connections", ctx -> {
+            if (!auth(ctx)) {
+                return;
+            }
+
+            var result = Seq.with(PlayerConnect.relay.getConnections())
+                    .map(connection -> {
+
+                        ConnectionDto dto = new ConnectionDto();
+                        dto.id = Utils.toString(connection);
+                        dto.ip = Utils.getIP(connection);
+
+                        return dto;
+                    }).list();
+
+            ctx.json(result);
+        });
+
+        app.post("ban", ctx -> {
+            if (!auth(ctx)) {
+                return;
+            }
+
+            var ip = ctx.body();
+
+            for (var connection : PlayerConnect.relay.getConnections()) {
+                if (Utils.getIP(connection).equals(ip)) {
+                    connection.close(DcReason.closed);
+                    Log.info("Kicked client <" + Utils.toString(connection) + "> for IP ban");
+                    Events.fire(new PlayerConnectEvents.ClientKickedEvent(connection));
+                }
+            }
+
+            Configs.IP_BLACK_LIST.add(ip);
+
+            ctx.json(Configs.IP_BLACK_LIST.list());
+        });
+
+        app.post("unban", ctx -> {
+            if (!auth(ctx)) {
+                return;
+            }
+
+            var ip = ctx.body();
+            Configs.IP_BLACK_LIST.remove(ip);
+
+            ctx.json(Configs.IP_BLACK_LIST.list());
+        });
+
         app.start(Integer.parseInt(System.getenv("PLAYER_CONNECT_HTTP_PORT")));
 
         Events.on(PlayerConnectEvents.RoomCreatedEvent.class, event -> {
@@ -120,6 +174,18 @@ public class HttpServer {
                 Log.err("Failed to send keep alive comment", error);
             }
         }, 0, 1, TimeUnit.SECONDS);
+    }
+
+    private boolean auth(Context context) {
+        var word = context.header("Authorization");
+
+        if (!word.equals(magicWord)) {
+            context.status(403);
+            context.result("Forbidden");
+            return false;
+        }
+
+        return true;
     }
 
     private void sendUpdateEvent(StatsLiveEvent stat) {
@@ -209,5 +275,11 @@ public class HttpServer {
     private static class StatsLiveEventPlayerData {
         public String name = "";
         public String locale = "en";
+    }
+
+    @Data
+    private static class ConnectionDto {
+        public String id = "";
+        public String ip = "";
     }
 }

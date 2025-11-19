@@ -89,7 +89,7 @@ public class NetworkRelay extends Server implements NetListener {
             return;
         }
 
-        Log.info("Connection @ received.", Utils.toString(connection));
+        Log.info("Connection @ received, ip: @", Utils.toString(connection), Utils.getIP(connection));
         connection.setArbitraryData(new Ratekeeper());
         connection.setName("Connection" + Utils.toString(connection)); // fix id format in stacktraces
         Events.fire(new PlayerConnectEvents.ClientConnectedEvent(connection));
