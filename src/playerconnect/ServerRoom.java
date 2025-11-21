@@ -110,7 +110,7 @@ public class ServerRoom implements NetListener {
                 p.connectionId = connectionId;
                 p.reason = DcReason.error;
                 host.sendTCP(p);
-                Log.info("Closed connection: " + con + " ip: " + Utils.getIp(con));
+                Log.info("Closed connection: " + con + " ip: " + Utils.getIP(connection));
             }
 
         } else if (host.isConnected() && clients.containsKey(connection.getID())) {
