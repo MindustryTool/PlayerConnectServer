@@ -110,8 +110,6 @@ public class ServerRoom implements NetListener {
                 p.connectionId = connectionId;
                 p.reason = DcReason.error;
                 host.sendTCP(p);
-
-                PlayerConnect.relay.rooms.remove(id);
             }
 
         } else if (host.isConnected() && clients.containsKey(connection.getID())) {
