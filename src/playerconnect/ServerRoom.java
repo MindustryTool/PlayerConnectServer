@@ -55,10 +55,14 @@ public class ServerRoom implements NetListener {
             return;
 
         } else if (host.isConnected()) {
-            Packets.ConnectionClosedPacket p = new Packets.ConnectionClosedPacket();
-            p.connectionId = connection.getID();
-            p.reason = reason;
-            host.sendTCP(p);
+            try {
+                Packets.ConnectionClosedPacket p = new Packets.ConnectionClosedPacket();
+                p.connectionId = connection.getID();
+                p.reason = reason;
+                host.sendTCP(p);
+            } catch (Exception e) {
+                Log.err("Error while sending ConnectionClosedPacket to host: " + e.getMessage());
+            }
         }
 
         clients.remove(connection.getID());

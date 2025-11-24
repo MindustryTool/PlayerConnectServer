@@ -190,8 +190,6 @@ public class HttpServer {
 
     private void sendUpdateEvent(StatsLiveEvent stat) {
         try {
-            Log.info("Send update event: " + stat);
-
             ArrayList<StatsLiveEvent> response = new ArrayList<>();
 
             response.add(stat);
