@@ -353,7 +353,7 @@ public class NetworkRelay extends Server implements NetListener {
     }
 
     public static class Serializer implements NetSerializer {
-        private final ThreadLocal<ByteBuffer> last = arc.util.Threads.local(() -> ByteBuffer.allocate(16384));
+        private final ThreadLocal<ByteBuffer> last = arc.util.Threads.local(() -> ByteBuffer.allocate(32768));
 
         @Override
         public Object read(ByteBuffer buffer) {
