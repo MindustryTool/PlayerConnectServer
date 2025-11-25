@@ -51,6 +51,7 @@ public class ServerRoom implements NetListener {
             return;
 
         if (connection == host) {
+            Log.info("Host disconnected, closing room: " + id);
             close();
             return;
 
@@ -73,10 +74,12 @@ public class ServerRoom implements NetListener {
         if (isClosed)
             return;
 
-        if (connection == host)
+        if (connection == host) {
+            Log.info("Host disconnected quietly, closing room: " + id);
             close();
-        else
+        } else {
             clients.remove(connection.getID());
+        }
     }
 
     /**

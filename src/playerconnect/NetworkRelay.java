@@ -32,7 +32,7 @@ public class NetworkRelay extends Server implements NetListener {
      */
     protected final IntMap<ByteBuffer[]> packetQueue = new IntMap<>();
     /** Size of the packet queue */
-    protected final int packetQueueSize = 3;
+    protected final int packetQueueSize = 6;
     /**
      * Keeps a cache of already notified idling connection, to avoid packet
      * spamming.
@@ -115,9 +115,8 @@ public class NetworkRelay extends Server implements NetListener {
         ServerRoom room = find(connection);
 
         if (room != null) {
-            room.disconnected(connection, reason);
-            // Remove the room if it was the host
 
+            // Remove the room if it was the host
             if (connection == room.host) {
                 rooms.remove(room.id);
                 Log.info("Room @ closed because connection @ (the host) has disconnected.", room.id,
@@ -125,6 +124,8 @@ public class NetworkRelay extends Server implements NetListener {
                 Events.fire(new PlayerConnectEvents.RoomClosedEvent(room));
             } else
                 Log.info("Connection @ left the room @.", Utils.toString(connection), room.id);
+
+            room.disconnected(connection, reason);
         }
 
         Events.fire(new PlayerConnectEvents.ClientDisconnectedEvent(connection, reason, room));
@@ -237,7 +238,7 @@ public class NetworkRelay extends Server implements NetListener {
                 }
 
                 room = new ServerRoom(connection, packet.password, packet.data);
-                
+
                 rooms.put(room.id, room);
                 room.create();
                 Log.info("Room @ created by connection @.", room.id, Utils.toString(connection));
