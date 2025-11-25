@@ -179,15 +179,18 @@ public class ServerRoom implements NetListener {
         if (isClosed)
             return;
         isClosed = true; // close before kicking connections, to avoid receiving events
+        try {
+            // Alert the close reason to the host
+            Packets.RoomClosedPacket p = new Packets.RoomClosedPacket();
+            p.reason = reason;
+            host.sendTCP(p);
 
-        // Alert the close reason to the host
-        Packets.RoomClosedPacket p = new Packets.RoomClosedPacket();
-        p.reason = reason;
-        host.sendTCP(p);
-
-        host.close(DcReason.closed);
-        clients.values().forEach(c -> c.close(DcReason.closed));
-        clients.clear();
+            host.close(DcReason.closed);
+            clients.values().forEach(c -> c.close(DcReason.closed));
+            clients.clear();
+        } catch (Exception e) {
+            Log.err("Error while closing room @: @", id, e);
+        }
 
         Log.info("Room @ closed, reason @", id, reason);
     }

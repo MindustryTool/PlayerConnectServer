@@ -115,8 +115,9 @@ public class NetworkRelay extends Server implements NetListener {
         ServerRoom room = find(connection);
 
         if (room != null) {
-
+            room.disconnected(connection, reason);
             // Remove the room if it was the host
+
             if (connection == room.host) {
                 rooms.remove(room.id);
                 Log.info("Room @ closed because connection @ (the host) has disconnected.", room.id,
@@ -124,8 +125,6 @@ public class NetworkRelay extends Server implements NetListener {
                 Events.fire(new PlayerConnectEvents.RoomClosedEvent(room));
             } else
                 Log.info("Connection @ left the room @.", Utils.toString(connection), room.id);
-
-            room.disconnected(connection, reason);
         }
 
         Events.fire(new PlayerConnectEvents.ClientDisconnectedEvent(connection, reason, room));
