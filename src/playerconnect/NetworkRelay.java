@@ -15,6 +15,7 @@ import arc.struct.IntSet;
 import arc.struct.ObjectMap;
 import arc.util.Log;
 import arc.util.Ratekeeper;
+import arc.util.Timer;
 import arc.util.io.ByteBufferInput;
 import arc.util.io.ByteBufferOutput;
 import playerconnect.shared.Packets;
@@ -41,9 +42,21 @@ public class NetworkRelay extends Server implements NetListener {
     /** List of created rooms */
     public final ObjectMap<String, ServerRoom> rooms = new ObjectMap<>();
 
+    public final int ROOM_IDLE_TIMEOUT =10 * 60 * 1000;
+
     public NetworkRelay() {
         super(32768, 16384, new Serializer());
         addListener(this);
+
+
+        Timer.schedule(() -> {
+            var delete = rooms.values().toSeq().select(r -> r.updatedAt < System.currentTimeMillis() - ROOM_IDLE_TIMEOUT);
+            for (ServerRoom room : delete) {
+                rooms.remove(room.id);
+                room.close(Packets.RoomClosedPacket.CloseReason.closed);
+                Events.fire(new PlayerConnectEvents.RoomClosedEvent(room));
+            }
+        }, 0, 60);
     }
 
     @Override
@@ -158,6 +171,7 @@ public class NetworkRelay extends Server implements NetListener {
                 Packets.StatsPacket statsPacket = (Packets.StatsPacket) object;
                 if (room != null) {
                     room.stats = statsPacket.data;
+                    room.updatedAt = System.currentTimeMillis();
                     room.ping = System.currentTimeMillis() - statsPacket.data.createdAt;
                     Events.fire(statsPacket);
                 }

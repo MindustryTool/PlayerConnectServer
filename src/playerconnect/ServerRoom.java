@@ -22,6 +22,7 @@ public class ServerRoom implements NetListener {
     private boolean isClosed;
     public final IntMap<Connection> clients = new IntMap<>();
     public final Long createdAt = System.currentTimeMillis();
+    public Long updatedAt = System.currentTimeMillis();
 
     public ServerRoom(Connection host, String password, Packets.RoomStats stats) {
         this.id = UUID.randomUUID().toString();
