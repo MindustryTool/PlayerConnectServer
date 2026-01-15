@@ -4,3 +4,8 @@
 .project
 build/
 bin/
+
+
+# Added by cargo
+
+/target
