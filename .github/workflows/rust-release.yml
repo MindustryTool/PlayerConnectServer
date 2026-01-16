@@ -23,4 +23,4 @@ jobs:
            with:
               context: ./
               push: true
-              tags: ghcr.io/mindustrytool/player-connect-server:rust
+              tags: ghcr.io/mindustrytool/player-connect-server-rust:latest
