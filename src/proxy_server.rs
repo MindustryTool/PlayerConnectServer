@@ -1,6 +1,9 @@
-use crate::packets::{AnyPacket, AppPacket, FrameworkMessage, RoomLinkPacket};
+use crate::packets::{
+    AnyPacket, AppPacket, ConnectionPacketWrapPacket, FrameworkMessage, RoomLinkPacket,
+};
 use crate::rate::AtomicRateLimiter;
 use crate::state::{AppState, ConnectionAction, RoomInit};
+use anyhow::anyhow;
 use bytes::{Buf, BytesMut};
 use std::io::Cursor;
 use std::net::SocketAddr;
@@ -58,7 +61,7 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
                                 // Normal packet, route it
                                 if let Some((sender, limiter)) = state.get_route(&addr) {
                                     if limiter.check() {
-                                        let _ = sender.try_send(ConnectionAction::Packet(packet));
+                                        let _ = sender.try_send(ConnectionAction::SendTCP(packet));
                                     }
                                 } else {
                                     // Unknown UDP sender, ignore
@@ -82,7 +85,7 @@ async fn handle_register_udp(state: &Arc<AppState>, connection_id: i32, addr: So
             "Registering UDP for connection {} at {}",
             connection_id, addr
         );
-        let _ = sender.try_send(ConnectionAction::SetUdp(addr));
+        let _ = sender.try_send(ConnectionAction::RegisterUDP(addr));
     }
 }
 
@@ -243,7 +246,16 @@ impl ConnectionActor {
         match packet {
             AnyPacket::Framework(f) => self.handle_framework(f).await?,
             AnyPacket::App(a) => self.handle_app(a).await?,
-            _ => {}
+            AnyPacket::Raw(bytes) => {
+                // TODO: Queue
+                if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
+                    self.state
+                        .rooms
+                        .broadcast(&room_id, ConnectionAction::SendTCPRaw(bytes), None);
+                } else {
+                    info!("No room found for connection {}", self.id);
+                }
+            }
         }
         Ok(())
     }
@@ -274,17 +286,20 @@ impl ConnectionActor {
     async fn handle_app(&mut self, packet: AppPacket) -> anyhow::Result<()> {
         match packet {
             AppPacket::RoomJoin(p) => {
-                // Logic to join room
-                // Need to get sender for this actor.
-                // We are the actor. We have rx.
-                // But we need to give a Sender to the Room.
-                // We don't have a clone of our own Sender here easily unless we stored it.
-                // Or we can get it from state (registry).
-                if let Some(sender) = self.state.get_sender(self.id) {
-                    self.state.rooms.join(self.id, &p.room_id, sender)?;
-                }
+                let Some(sender) = self.state.get_sender(self.id) else {
+                    return Err(anyhow::anyhow!(
+                        "No sender found for connection {}",
+                        self.id
+                    ));
+                };
+                self.state.rooms.join(self.id, &p.room_id, sender)?;
             }
             AppPacket::RoomCreationRequest(p) => {
+                if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
+                    info!("Connection {} already in room {}", self.id, room_id);
+
+                    return Ok(());
+                }
                 if let Some(sender) = self.state.get_sender(self.id) {
                     let room_id = self.state.rooms.create(RoomInit {
                         connection_id: self.id,
@@ -298,7 +313,41 @@ impl ConnectionActor {
                     .await?;
                 }
             }
-            _ => {}
+            AppPacket::ConnectionPacketWrap(ConnectionPacketWrapPacket {
+                connection_id,
+                is_tcp,
+                buffer,
+            }) => {
+                if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
+                    if let Ok(rooms) = self.state.rooms.rooms.read() {
+                        let is_owner = rooms
+                            .get(&room_id)
+                            .map(|r| r.host_connection_id == self.id)
+                            .unwrap_or(false);
+
+                        if !is_owner {
+                            return Err(anyhow!("Not room owner"));
+                        }
+
+                        let action = if is_tcp {
+                            ConnectionAction::SendTCPRaw(buffer)
+                        } else {
+                            ConnectionAction::SendUDPRaw(buffer)
+                        };
+
+                        let Some(sender) = self.state.get_sender(connection_id) else {
+                            return Err(anyhow!("Connection not found: {}", connection_id));
+                        };
+
+                        sender.try_send(action)?;
+                    }
+                } else {
+                    info!("No room found for connection {}", self.id);
+                }
+            }
+            _ => {
+                info!("Unhandled {:?}", packet);
+            }
         }
         Ok(())
     }
@@ -309,18 +358,24 @@ impl ConnectionActor {
         batch: &mut BytesMut,
     ) -> anyhow::Result<()> {
         match action {
-            ConnectionAction::Packet(p) => {
+            ConnectionAction::SendTCP(p) => {
                 let bytes = p.to_bytes();
                 batch.extend_from_slice(&bytes);
             }
-            ConnectionAction::Raw(b) => {
+            ConnectionAction::SendUDP(p) => {
+                info!("Send UDP: {:?}", p);
+            }
+            ConnectionAction::SendTCPRaw(b) => {
                 batch.extend_from_slice(&b);
+            }
+            ConnectionAction::SendUDPRaw(b) => {
+                info!("Send UDP raw to {}", self.id);
             }
             ConnectionAction::Close => {
                 // Return error to break loop
                 return Err(anyhow::anyhow!("Closed"));
             }
-            ConnectionAction::SetUdp(addr) => {
+            ConnectionAction::RegisterUDP(addr) => {
                 self.udp_addr = Some(addr);
                 // Register in state
                 if let Some(sender) = self.state.get_sender(self.id) {

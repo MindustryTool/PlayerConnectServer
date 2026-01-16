@@ -12,12 +12,14 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 use uuid::Uuid;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ConnectionAction {
-    Packet(AnyPacket),
-    Raw(Bytes),
+    SendTCP(AnyPacket),
+    SendUDP(AnyPacket),
+    SendTCPRaw(Bytes),
+    SendUDPRaw(Bytes),
     Close,
-    SetUdp(SocketAddr),
+    RegisterUDP(SocketAddr),
 }
 
 #[derive(Debug)]
@@ -168,14 +170,14 @@ impl Rooms {
         self.tx.subscribe()
     }
 
-    pub fn broadcast(&self, room_id: &str, bytes: Bytes, exclude_id: Option<i32>) {
+    pub fn broadcast(&self, room_id: &str, action: ConnectionAction, exclude_id: Option<i32>) {
         if let Ok(rooms) = self.rooms.read() {
             if let Some(room) = rooms.get(room_id) {
                 for (id, sender) in &room.members {
                     if Some(*id) == exclude_id {
                         continue;
                     }
-                    let _ = sender.try_send(ConnectionAction::Raw(bytes.clone()));
+                    let _ = sender.try_send(action.clone());
                 }
             }
         }

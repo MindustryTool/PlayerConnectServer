@@ -10,14 +10,14 @@ use tracing::info;
 pub const APP_PACKET_ID: i8 = -4;
 pub const FRAMEWORK_PACKET_ID: i8 = -2;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AnyPacket {
     Framework(FrameworkMessage),
     App(AppPacket),
     Raw(Bytes),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum FrameworkMessage {
     Ping { id: i32, is_reply: bool },
     DiscoverHost,
@@ -26,7 +26,7 @@ pub enum FrameworkMessage {
     RegisterTCP { connection_id: i32 },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AppPacket {
     ConnectionPacketWrap(ConnectionPacketWrapPacket),
     ConnectionClosed(ConnectionClosedPacket),
@@ -43,72 +43,72 @@ pub enum AppPacket {
     Stats(StatsPacket),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConnectionPacketWrapPacket {
     pub connection_id: i32,
     pub is_tcp: bool,
     pub buffer: Bytes,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConnectionClosedPacket {
     pub connection_id: i32,
     pub reason: ArcCloseReason,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConnectionJoinPacket {
     pub connection_id: i32,
     pub room_id: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConnectionIdlingPacket {
     pub connection_id: i32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RoomLinkPacket {
     pub room_id: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RoomJoinPacket {
     pub room_id: String,
     pub password: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RoomClosureRequestPacket;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RoomClosedPacket {
     pub reason: CloseReason,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RoomCreationRequestPacket {
     pub version: String,
     pub password: String,
     pub data: Stats,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MessagePacket {
     pub message: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PopupPacket {
     pub message: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Message2Packet {
     pub message: MessageType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StatsPacket {
     pub room_id: String,
     pub data: Stats,
