@@ -1,5 +1,5 @@
 mod config;
-mod models;
+mod constant;
 mod packets;
 mod state;
 mod proxy_server;

@@ -1,49 +1,116 @@
-use crate::models::{ArcCloseReason, Room, Stats};
-use crate::packets::{AnyPacket, AppPacket, ConnectionClosedPacket};
-use crate::rate::RateLimiter;
+use crate::packets::AnyPacket;
+use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;
 use anyhow::anyhow;
 use bytes::Bytes;
-use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast::Receiver;
-use tokio::sync::mpsc::{self};
-use tracing::info;
+use tokio::sync::mpsc;
+use tracing::{error, info};
 use uuid::Uuid;
 
+#[derive(Debug)]
+pub enum ConnectionAction {
+    Packet(AnyPacket),
+    Raw(Bytes),
+    Close,
+    SetUdp(SocketAddr),
+}
+
+#[derive(Debug)]
+pub struct Room {
+    pub id: String,
+    pub host_connection_id: i32,
+    pub password: Option<String>,
+    pub created_at: u128,
+    pub updated_at: u128,
+    pub members: HashMap<i32, mpsc::Sender<ConnectionAction>>,
+    pub stats: Stats,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Stats {
+    pub players: Vec<Player>,
+    #[serde(rename = "mapName")]
+    pub map_name: String,
+    pub name: String,
+    pub gamemode: String,
+    pub mods: Vec<String>,
+    pub locale: String,
+    pub version: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Player {
+    pub name: String,
+    pub locale: String,
+}
+
 pub struct Rooms {
-    rooms: DashMap<String, Room>,
-    connection_room: DashMap<i32, String>,
-    // Channel to broadcast room updates to SSE (sender)
+    pub rooms: RwLock<HashMap<String, Room>>,
     tx: tokio::sync::broadcast::Sender<RoomUpdate>,
 }
+
 pub struct RoomInit {
     pub connection_id: i32,
     pub password: String,
     pub stats: Stats,
+    pub sender: mpsc::Sender<ConnectionAction>,
 }
 
 impl Rooms {
-    pub fn get(
+    pub fn get_sender(
         &self,
+        room_id: &str,
+        connection_id: i32,
+    ) -> Option<mpsc::Sender<ConnectionAction>> {
+        let rooms = self.rooms.read().ok()?;
+
+        rooms.get(room_id)?.members.get(&connection_id).cloned()
+    }
+
+    pub fn find_connection_room_id(&self, connection_id: i32) -> Option<String> {
+        let rooms = self.rooms.read().ok()?;
+
+        rooms
+            .iter()
+            .find(|(_, room)| room.members.contains_key(&connection_id))
+            .map(|(id, _)| id.clone())
+    }
+
+    pub fn join(
+        &self,
+        connection_id: i32,
         room_id: &String,
-    ) -> std::option::Option<dashmap::mapref::one::Ref<'_, std::string::String, Room>> {
-        return self.rooms.get(room_id);
+        sender: mpsc::Sender<ConnectionAction>,
+    ) -> anyhow::Result<()> {
+        let mut rooms = self.rooms.write().map_err(|_| anyhow!("Lock poison"))?;
+
+        if let Some(room) = rooms.get_mut(room_id) {
+            room.members.insert(connection_id, sender);
+            Ok(())
+        } else {
+            Err(anyhow!("Room not found"))
+        }
     }
 
-    pub fn find_connection_room(
-        &self,
-        connection_id: &i32,
-    ) -> std::option::Option<dashmap::mapref::one::Ref<'_, std::string::String, Room>> {
-        self.connection_room
-            .get(connection_id)
-            .and_then(|room_id| self.rooms.get(&room_id.clone()))
-    }
+    pub fn leave(&self, connection_id: i32) -> Option<String> {
+        let mut rooms = self.rooms.write().ok()?;
+        let room_id = rooms
+            .iter()
+            .find(|(_, room)| room.members.contains_key(&connection_id))
+            .map(|(id, _)| id.clone())?;
 
-    pub fn join(&self, connection_id: i32, room_id: &String) {
-        self.connection_room.insert(connection_id, room_id.clone());
+        if let Some(room) = rooms.get_mut(&room_id) {
+            room.members.remove(&connection_id);
+        }
+
+        Some(room_id)
     }
 
     pub fn create(&self, init: RoomInit) -> String {
@@ -51,155 +118,195 @@ impl Rooms {
             password,
             connection_id,
             stats,
+            sender,
         } = init;
 
-        let password = if password.len() == 0 {
+        let password = if password.is_empty() {
             None
         } else {
             Some(password)
         };
 
         let room_id = Uuid::now_v7().to_string();
+        let mut members = HashMap::new();
+
+        members.insert(connection_id, sender);
+
         let room = Room {
             id: room_id.clone(),
             host_connection_id: connection_id,
             password,
-            ping: 0,
-            is_closed: false,
             stats,
+            members,
             created_at: current_time_millis(),
             updated_at: current_time_millis(),
         };
 
-        self.rooms.insert(room_id.clone(), room);
+        if let Ok(mut rooms) = self.rooms.write() {
+            rooms.insert(room_id.clone(), room);
+        }
 
-        return room_id;
+        room_id
     }
 
     pub fn close(&self, room_id: &String) {
-        if let Some((_, _)) = self.rooms.remove(room_id) {
-            let _ = self
-                .tx
-                .send(crate::state::RoomUpdate::Remove(room_id.clone()));
-
-            info!("Room removed: {}", room_id);
-        } else {
-            info!("Room not exists: {}", room_id);
-        }
-    }
-
-    pub async fn disconnect(
-        &self,
-        state: &AppState,
-        connection_id: i32,
-        reason: ArcCloseReason,
-    ) -> anyhow::Result<()> {
-        if let Some((_, room_id)) = self.connection_room.remove(&connection_id) {
-            let is_host = self
-                .rooms
-                .get(&room_id)
-                .map(|r| r.host_connection_id == connection_id)
-                .unwrap_or(false);
-
-            if is_host {
-                self.close(&room_id);
+        let removed = {
+            if let Ok(mut rooms) = self.rooms.write() {
+                rooms.remove(room_id)
             } else {
-                let packet = AnyPacket::App(AppPacket::ConnectionClosed(ConnectionClosedPacket {
-                    connection_id,
-                    reason,
-                }));
-
-                state.send(packet, connection_id).await?;
+                None
             }
-        }
+        };
 
-        Ok(())
+        if removed.is_some() {
+            let _ = self.tx.send(RoomUpdate::Remove(room_id.clone()));
+            info!("Room removed: {}", room_id);
+        }
     }
 
     pub fn subscribe(&self) -> Receiver<RoomUpdate> {
-        return self.tx.subscribe();
+        self.tx.subscribe()
+    }
+
+    pub fn broadcast(&self, room_id: &str, bytes: Bytes, exclude_id: Option<i32>) {
+        if let Ok(rooms) = self.rooms.read() {
+            if let Some(room) = rooms.get(room_id) {
+                for (id, sender) in &room.members {
+                    if Some(*id) == exclude_id {
+                        continue;
+                    }
+                    let _ = sender.try_send(ConnectionAction::Raw(bytes.clone()));
+                }
+            }
+        }
     }
 }
 
 pub struct AppState {
     pub rooms: Rooms,
-    pub pending_connections: DashMap<i32, PendingConnectionState>,
-    pub connections: DashMap<i32, ConnectionState>,
-    // Maps connection ID to its queue of packets waiting for room join
-    pub packet_queue: DashMap<i32, Vec<Bytes>>,
-}
-
-impl AppState {
-    pub async fn disconnect(&self, connection_id: i32) -> anyhow::Result<()> {
-        self.pending_connections.remove(&connection_id);
-        self.connections.remove(&connection_id);
-        self.packet_queue.remove(&connection_id);
-        self.rooms
-            .disconnect(&self, connection_id, ArcCloseReason::Closed)
-            .await?;
-
-        info!("Disconnected connection {}", connection_id);
-
-        Ok(())
-    }
-
-    pub async fn send(&self, packet: AnyPacket, connection_id: i32) -> anyhow::Result<()> {
-        let bytes = packet.bytes();
-        let length = bytes.len();
-
-        // info!("Sending packet: {:?} with len: {}", packet, length);
-
-        if let Some(mut conn) = self.connections.get_mut(&connection_id) {
-            conn.tx.send(bytes).await?;
-            conn.last_write_time = Instant::now();
-        } else if let Some(mut conn) = self.pending_connections.get_mut(&connection_id) {
-            conn.tx.send(bytes).await?;
-            conn.last_write_time = Instant::now();
-        } else {
-            return Err(anyhow!("No connection for id: {}", connection_id));
-        }
-
-        info!("Sent packet: {:?} with len: {}", packet, length);
-
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum RoomUpdate {
-    Update(Room),
-    Remove(String),
-}
-
-pub struct PendingConnectionState {
-    pub id: i32,
-    pub tx: mpsc::Sender<Bytes>, // To send data back to the TCP connection
-    pub last_write_time: Instant,
-    pub rate: RateLimiter,
-    pub created_at: Instant,
-}
-
-pub struct ConnectionState {
-    pub id: i32,
-    pub tx: mpsc::Sender<Bytes>, // To send data back to the TCP connection
-    pub udp_addr: SocketAddr,
-    pub rate: RateLimiter,
-    pub last_write_time: Instant,
-    pub created_at: Instant,
+    pub connections: RwLock<HashMap<i32, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
+    pub udp_routes:
+        RwLock<HashMap<SocketAddr, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         let (tx, _) = tokio::sync::broadcast::channel(100);
         Self {
-            connections: DashMap::new(),
-            pending_connections: DashMap::new(),
-            packet_queue: DashMap::new(),
             rooms: Rooms {
-                rooms: DashMap::new(),
-                connection_room: DashMap::new(),
-                tx: tx,
+                rooms: RwLock::new(HashMap::new()),
+                tx,
             },
+            connections: RwLock::new(HashMap::new()),
+            udp_routes: RwLock::new(HashMap::new()),
         }
     }
+
+    pub fn register_connection(
+        &self,
+        id: i32,
+        sender: mpsc::Sender<ConnectionAction>,
+        limiter: Arc<AtomicRateLimiter>,
+    ) {
+        match self.connections.write() {
+            Ok(mut conns) => {
+                conns.insert(id, (sender, limiter));
+            }
+            Err(err) => {
+                error!("{}", err)
+            }
+        }
+    }
+
+    pub fn register_udp(
+        &self,
+        addr: SocketAddr,
+        sender: mpsc::Sender<ConnectionAction>,
+        limiter: Arc<AtomicRateLimiter>,
+    ) {
+        if let Ok(mut routes) = self.udp_routes.write() {
+            routes.insert(addr, (sender, limiter));
+        }
+    }
+
+    pub fn remove_udp(&self, addr: SocketAddr) {
+        if let Ok(mut routes) = self.udp_routes.write() {
+            routes.remove(&addr);
+        }
+    }
+
+    pub fn get_sender(&self, id: i32) -> Option<mpsc::Sender<ConnectionAction>> {
+        self.connections
+            .read()
+            .ok()?
+            .get(&id)
+            .map(|(s, _)| s.clone())
+    }
+
+    pub fn get_route(
+        &self,
+        addr: &SocketAddr,
+    ) -> Option<(mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)> {
+        self.udp_routes.read().ok()?.get(addr).cloned()
+    }
+
+    pub fn remove_connection(&self, connection_id: i32) {
+        if let Ok(mut conns) = self.connections.write() {
+            conns.remove(&connection_id);
+        }
+
+        // Handle room logic
+        let room_id_opt = self.rooms.leave(connection_id);
+        if let Some(room_id) = room_id_opt {
+            // Check if host
+            let should_close = {
+                if let Ok(rooms) = self.rooms.rooms.read() {
+                    if let Some(room) = rooms.get(&room_id) {
+                        room.host_connection_id == connection_id
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+
+            if should_close {
+                // Close room and disconnect all members
+                let members = {
+                    if let Ok(rooms) = self.rooms.rooms.read() {
+                        if let Some(room) = rooms.get(&room_id) {
+                            room.members.values().cloned().collect::<Vec<_>>()
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    }
+                };
+
+                for sender in members {
+                    let _ = sender.try_send(ConnectionAction::Close);
+                }
+
+                self.rooms.close(&room_id);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum RoomUpdate {
+    Update(RoomDisplay),
+    Remove(String),
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RoomDisplay {
+    pub id: String,
+    pub host_connection_id: i32,
+    pub password: bool,
+    pub players: usize,
+    pub max_players: usize,
+    pub stats: Stats,
 }

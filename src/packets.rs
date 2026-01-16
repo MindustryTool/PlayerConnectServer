@@ -1,4 +1,7 @@
-use crate::models::{ArcCloseReason, CloseReason, MessageType, Stats};
+use crate::{
+    constant::{ArcCloseReason, CloseReason, MessageType},
+    state::Stats,
+};
 use anyhow::{anyhow, Result};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io::Cursor;
@@ -133,7 +136,7 @@ impl AnyPacket {
         }
     }
 
-    pub fn bytes(&self) -> Bytes {
+    pub fn to_bytes(&self) -> Bytes {
         let mut payload = BytesMut::new();
 
         match self {

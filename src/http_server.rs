@@ -63,8 +63,15 @@ async fn room_page(
     Path(room_id): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    if let Some(room) = state.rooms.get(&room_id) {
-        let stats = &room.stats;
+    let stats = {
+        if let Ok(rooms) = state.rooms.rooms.read() {
+            rooms.get(&room_id).map(|r| r.stats.clone())
+        } else {
+            None
+        }
+    };
+
+    if let Some(stats) = stats {
         let html = format!(
             r#"<!DOCTYPE html>
 <html lang="en">
