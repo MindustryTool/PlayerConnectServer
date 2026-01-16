@@ -35,8 +35,8 @@ pub async fn run(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
 
     info!("Proxy Server listening on TCP/UDP {}", port);
 
-    spawn_udp_listener(state.clone(), udp_socket);
-    accept_tcp_connection(state, tcp_listener).await
+    spawn_udp_listener(state.clone(), udp_socket.clone());
+    accept_tcp_connection(state, tcp_listener, udp_socket).await
 }
 
 fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
@@ -89,12 +89,17 @@ async fn handle_register_udp(state: &Arc<AppState>, connection_id: i32, addr: So
     }
 }
 
-async fn accept_tcp_connection(state: Arc<AppState>, listener: TcpListener) -> anyhow::Result<()> {
+async fn accept_tcp_connection(
+    state: Arc<AppState>,
+    listener: TcpListener,
+    udp_socket: Arc<UdpSocket>,
+) -> anyhow::Result<()> {
     loop {
         let (socket, addr) = listener.accept().await?;
         info!("New connection from {}", addr);
 
         let state = state.clone();
+        let udp_socket = udp_socket.clone();
 
         tokio::spawn(async move {
             let _ = socket.set_nodelay(true);
@@ -114,10 +119,9 @@ async fn accept_tcp_connection(state: Arc<AppState>, listener: TcpListener) -> a
                 id,
                 state: state.clone(),
                 rx,
-                writer,
-                udp_addr: None,
+                tcp_writer: TcpWriter::new(writer),
+                udp_writer: UdpWriter::new(udp_socket),
                 limiter,
-                last_write: Instant::now(),
                 last_read: Instant::now(),
             };
 
@@ -127,7 +131,7 @@ async fn accept_tcp_connection(state: Arc<AppState>, listener: TcpListener) -> a
 
             state.remove_connection(id);
 
-            if let Some(addr) = actor.udp_addr {
+            if let Some(addr) = actor.udp_writer.addr {
                 state.remove_udp(addr);
             }
 
@@ -140,10 +144,9 @@ struct ConnectionActor {
     id: i32,
     state: Arc<AppState>,
     rx: mpsc::Receiver<ConnectionAction>,
-    writer: tokio::net::tcp::OwnedWriteHalf,
-    udp_addr: Option<SocketAddr>,
+    tcp_writer: TcpWriter,
+    udp_writer: UdpWriter,
     limiter: Arc<AtomicRateLimiter>,
-    last_write: Instant,
     last_read: Instant,
 }
 
@@ -192,8 +195,7 @@ impl ConnectionActor {
                         }
                         // Flush batch
                         if !batch.is_empty() {
-                            self.writer.write_all(&batch).await?;
-                            self.last_write = Instant::now();
+                            self.tcp_writer.write(&batch).await?;
                         }
                     } else {
                         // Channel closed
@@ -208,7 +210,7 @@ impl ConnectionActor {
                         break;
                     }
 
-                    if self.last_write.elapsed() > Duration::from_millis(KEEP_ALIVE_INTERVAL_MS) {
+                    if self.tcp_writer.last_write.elapsed() > Duration::from_millis(KEEP_ALIVE_INTERVAL_MS) {
                          self.write_packet(AnyPacket::Framework(FrameworkMessage::KeepAlive)).await?;
                     }
                 }
@@ -363,23 +365,28 @@ impl ConnectionActor {
                 batch.extend_from_slice(&bytes);
             }
             ConnectionAction::SendUDP(p) => {
-                info!("Send UDP: {:?}", p);
+                self.udp_writer.send(p).await?;
             }
             ConnectionAction::SendTCPRaw(b) => {
                 batch.extend_from_slice(&b);
             }
             ConnectionAction::SendUDPRaw(b) => {
-                info!("Send UDP raw to {}", self.id);
+                self.udp_writer.send_raw(&b).await?;
             }
             ConnectionAction::Close => {
                 // Return error to break loop
                 return Err(anyhow::anyhow!("Closed"));
             }
             ConnectionAction::RegisterUDP(addr) => {
-                self.udp_addr = Some(addr);
+                self.udp_writer.set_addr(addr);
                 // Register in state
                 if let Some(sender) = self.state.get_sender(self.id) {
                     self.state.register_udp(addr, sender, self.limiter.clone());
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "No sender found for connection {}",
+                        self.id
+                    ));
                 }
                 // Send reply
                 self.write_packet(AnyPacket::Framework(FrameworkMessage::RegisterUDP {
@@ -392,9 +399,60 @@ impl ConnectionActor {
     }
 
     async fn write_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {
-        let bytes = packet.to_bytes();
-        self.writer.write_all(&bytes).await?;
+        self.tcp_writer.write_packet(packet).await
+    }
+}
+
+struct TcpWriter {
+    writer: tokio::net::tcp::OwnedWriteHalf,
+    last_write: Instant,
+}
+
+impl TcpWriter {
+    fn new(writer: tokio::net::tcp::OwnedWriteHalf) -> Self {
+        Self {
+            writer,
+            last_write: Instant::now(),
+        }
+    }
+
+    async fn write(&mut self, data: &[u8]) -> anyhow::Result<()> {
+        self.writer.write_all(data).await?;
         self.last_write = Instant::now();
         Ok(())
+    }
+
+    async fn write_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {
+        let bytes = packet.to_bytes();
+        self.write(&bytes).await
+    }
+}
+
+struct UdpWriter {
+    socket: Arc<UdpSocket>,
+    addr: Option<SocketAddr>,
+}
+
+impl UdpWriter {
+    fn new(socket: Arc<UdpSocket>) -> Self {
+        Self { socket, addr: None }
+    }
+
+    fn set_addr(&mut self, addr: SocketAddr) {
+        self.addr = Some(addr);
+    }
+
+    async fn send(&self, packet: AnyPacket) -> anyhow::Result<()> {
+        return self.send_raw(&packet.to_bytes()).await;
+    }
+
+    async fn send_raw(&self, bytes: &[u8]) -> anyhow::Result<()> {
+        if let Some(addr) = self.addr {
+            self.socket.send_to(bytes, addr).await?;
+
+            return Ok(());
+        }
+
+        return Err(anyhow!("UPD not registered"));
     }
 }
