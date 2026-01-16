@@ -1,7 +1,10 @@
 use crate::state::{AppState, RoomUpdate};
 use axum::{
     extract::{Path, State},
-    response::{sse::{Event, Sse}, Html, IntoResponse},
+    response::{
+        sse::{Event, Sse},
+        Html, IntoResponse,
+    },
     routing::{get, post},
     Router,
 };
@@ -33,38 +36,37 @@ async fn ping() -> impl IntoResponse {
 async fn rooms_sse(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<Event, axum::BoxError>>> {
-    let rx = state.room_updates_tx.subscribe();
+    let rx = state.rooms.subscribe();
     let stream = BroadcastStream::new(rx);
 
     // Initial state: Send all current rooms
     // We need to construct a stream that starts with current rooms and then follows updates
-    // For simplicity here, we just subscribe to updates. 
+    // For simplicity here, we just subscribe to updates.
     // Ideally, we should send an initial "snapshot" event or individual add events.
-    
-    let stream = stream.map(|msg| {
-        match msg {
-            Ok(update) => {
-                let event = match update {
-                    RoomUpdate::Update(room) => {
-                        Event::default().event("update").json_data(room.stats)
-                    }
-                    RoomUpdate::Remove(id) => Ok({
-                        Event::default().event("remove").data(id)
-                    })
-                };
-                event.map_err(|e| axum::BoxError::from(e))
-            }
-            Err(e) => Err(axum::BoxError::from(e)),
+
+    let stream = stream.map(|msg| match msg {
+        Ok(update) => {
+            let event = match update {
+                RoomUpdate::Update(room) => Event::default().event("update").json_data(room.stats),
+                RoomUpdate::Remove(id) => Ok({ Event::default().event("remove").data(id) }),
+            };
+            event.map_err(|e| axum::BoxError::from(e))
         }
+        Err(e) => Err(axum::BoxError::from(e)),
     });
 
-    Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(10)))
+    Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(10)))
 }
 
-async fn room_page(Path(room_id): Path<String>, State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn room_page(
+    Path(room_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
     if let Some(room) = state.rooms.get(&room_id) {
         let stats = &room.stats;
-        let html = format!(r#"<!DOCTYPE html>
+        let html = format!(
+            r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -95,23 +97,26 @@ async fn room_page(Path(room_id): Path<String>, State(state): State<Arc<AppState
         <li><strong>Created At:</strong> {}</li>
     </ul>
 </body>
-</html>"#, 
-        stats.name, 
-        stats.name,
-        stats.map_name, stats.gamemode, stats.players.len(), stats.version,
-        stats.map_name,
-        stats.gamemode,
-        stats.players.len(),
-        stats.locale,
-        stats.version,
-        stats.created_at,
-        stats.name,
-        stats.map_name,
-        stats.gamemode,
-        stats.players.len(),
-        stats.locale,
-        stats.version,
-        stats.created_at
+</html>"#,
+            stats.name,
+            stats.name,
+            stats.map_name,
+            stats.gamemode,
+            stats.players.len(),
+            stats.version,
+            stats.map_name,
+            stats.gamemode,
+            stats.players.len(),
+            stats.locale,
+            stats.version,
+            stats.created_at,
+            stats.name,
+            stats.map_name,
+            stats.gamemode,
+            stats.players.len(),
+            stats.locale,
+            stats.version,
+            stats.created_at
         );
         Html(html)
     } else {

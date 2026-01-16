@@ -1,22 +1,15 @@
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Room {
     pub id: String,
-    #[serde(skip)]
     pub host_connection_id: i32, // Internal reference
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
     pub ping: i64,
-    #[serde(rename = "isClosed")]
     pub is_closed: bool,
-    #[serde(rename = "createdAt")]
-    pub created_at: i64,
-    #[serde(rename = "updatedAt")]
-    pub updated_at: i64,
-    #[serde(skip)]
-    pub clients: Vec<i32>, // List of connection IDs
+    pub created_at: u128,
+    pub updated_at: u128,
     pub stats: Stats,
 }
 

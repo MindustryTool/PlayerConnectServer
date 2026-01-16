@@ -133,7 +133,7 @@ impl AnyPacket {
         }
     }
 
-    pub fn write(&self, out: &mut BytesMut) {
+    pub fn bytes(&self) -> Bytes {
         let mut payload = BytesMut::new();
 
         match self {
@@ -143,15 +143,17 @@ impl AnyPacket {
             AnyPacket::App(package) => {
                 package.write(&mut payload);
             }
-            AnyPacket::Raw(bytes) => {
-                payload.put_slice(bytes);
+            AnyPacket::Raw(data) => {
+                payload.put_slice(data);
             }
         }
 
-        info!("Sending packet: {:?} with len: {}", self, payload.len());
+        let mut out: BytesMut = BytesMut::new();
 
         out.put_u16(payload.len() as u16);
         out.extend_from_slice(&payload);
+
+        out.freeze()
     }
 }
 
@@ -198,7 +200,6 @@ impl FrameworkMessage {
         }
     }
 }
-
 
 impl AppPacket {
     pub fn read(buf: &mut Cursor<&[u8]>) -> Result<Self> {
@@ -337,7 +338,6 @@ impl AppPacket {
         }
     }
 }
-
 
 // Helper to read/write strings
 pub fn read_string(buf: &mut Cursor<&[u8]>) -> Result<String> {

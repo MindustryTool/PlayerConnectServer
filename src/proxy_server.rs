@@ -1,7 +1,10 @@
 use crate::packets::{
     AnyPacket, AppPacket, FrameworkMessage, RoomCreationRequestPacket, RoomLinkPacket,
 };
-use crate::state::{AppState, ConnectionState};
+use crate::rate::RateLimiter;
+use crate::state::{AppState, ConnectionState, PendingConnectionState, RoomInit};
+
+use anyhow::anyhow;
 use bytes::{Buf, BytesMut};
 use std::io::Cursor;
 use std::net::SocketAddr;
@@ -9,50 +12,59 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, UdpSocket};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
-use uuid::{uuid, Uuid};
+use tracing::{error, info};
 
 static NEXT_CONNECTION_ID: AtomicI32 = AtomicI32::new(1);
 
-const BUFFER_SIZE: usize = 32768;
-const CONNECTION_TIME_OUT: u64 = 10000; // In ms
-const KEEP_ALIVE_INTERVAL: u64 = 8000; // In
+const UDP_BUFFER_SIZE: usize = 4096;
+const TCP_BUFFER_SIZE: usize = 32768;
+const CHANNEL_CAPACITY: usize = 100;
+const CONNECTION_TIME_OUT_MS: u64 = 10000;
+const KEEP_ALIVE_INTERVAL_MS: u64 = 2000;
 const PACKET_LENGTH_LENGTH: usize = 2;
+const TICK_INTERVAL_SECS: u64 = 1;
+
+const PACKET_RATE_LIMIT_WINDOW: Duration = Duration::from_millis(3000);
+const PACKET_RATE_LIMIT: usize = 300;
 
 pub async fn run(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
     let address = format!("0.0.0.0:{}", port);
 
-    let listener = TcpListener::bind(address.clone()).await?;
+    let tcp_listener = TcpListener::bind(address.clone()).await?;
     let udp_socket = Arc::new(UdpSocket::bind(address).await?);
 
     info!("Proxy Server listening on TCP/UDP {}", port);
 
-    let udp_state = state.clone();
-    let udp_socket_clone = udp_socket.clone();
+    spawn_udp_listener(state.clone(), udp_socket);
+    accept_tcp_connection(state.clone(), tcp_listener).await
+}
 
-    // UDP Listener Loop
+fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
     tokio::spawn(async move {
-        let mut buf = [0u8; 4096];
+        let mut buf = [0u8; UDP_BUFFER_SIZE];
+
         loop {
-            match udp_socket_clone.recv_from(&mut buf).await {
+            match socket.recv_from(&mut buf).await {
                 Ok((len, addr)) => {
                     let data = &buf[..len];
-                    if let Err(e) = handle_udp_packet(&udp_state, data, addr).await {
-                        error!("UDP Error from {}: {}", addr, e);
+                    if let Err(error) = handle_udp_packet(&state, data, addr).await {
+                        error!("UDP Error from {}: {}", addr, error);
                     }
                 }
-                Err(e) => {
-                    error!("UDP Receive Error: {}", e);
-                }
+                Err(e) => error!("UDP Receive Error: {}", e),
             }
         }
     });
+}
 
+async fn accept_tcp_connection(state: Arc<AppState>, listener: TcpListener) -> anyhow::Result<()> {
     loop {
         let (socket, addr) = listener.accept().await?;
+
         info!("New connection from {}", addr);
+
         let state = state.clone();
 
         tokio::spawn(async move {
@@ -68,140 +80,137 @@ async fn handle_udp_packet(
     data: &[u8],
     addr: SocketAddr,
 ) -> anyhow::Result<()> {
-    // Basic packet structure check: Length (2 bytes) + Payload
-
     info!("UDP: Received {} bytes from {}", data.len(), addr);
 
-    // if data.len() < PACKET_LENGTH_LENGTH {
-    //     return Ok(());
-    // }
-
-    // let mut cursor = Cursor::new(data);
-    // let len = cursor.get_u16() as usize;
-
-    // if data.len() < PACKET_LENGTH_LENGTH + len {
-    //     warn!("Invalid packet length {} from {}", len, addr);
-    //     return Ok(());
-    // }
-
-    // let payload = &data[PACKET_LENGTH_LENGTH..PACKET_LENGTH_LENGTH ];
     let mut payload_cursor = Cursor::new(data);
-    let packet = AnyPacket::read(&mut payload_cursor);
+    let packet = AnyPacket::read(&mut payload_cursor)?;
 
     match packet {
-        Ok(AnyPacket::Framework(FrameworkMessage::RegisterUDP { connection_id })) => {
-            let tx = if let Some(mut conn) = state.connections.get_mut(&connection_id) {
-                info!(
-                    "Registering UDP for connection {} at {}",
-                    connection_id, addr
-                );
-                conn.udp_addr = Some(addr);
-
-                Some(conn.tx.clone())
-            } else {
-                info!(
-                    "Received RegisterUDP for unknown connection {}",
-                    connection_id
-                );
-                None
-            };
-
-            match tx {
-                Some(tx) => {
-                    // Send RegisterUDP reply via TCP
-                    let reply =
-                        AnyPacket::Framework(FrameworkMessage::RegisterUDP { connection_id });
-
-                    let mut buf = BytesMut::new();
-
-                    reply.write(&mut buf);
-
-                    if let Err(e) = tx.send(buf.freeze()).await {
-                        error!("Failed to send RegisterUDP reply via TCP: {}", e);
-                    } else {
-                        if let Some(mut conn) = state.connections.get_mut(&connection_id) {
-                            conn.last_write_time = Instant::now();
-                        }
-                    }
-                }
-                None => {
-                    warn!(
-                        "Received RegisterUDP for unknown connection {}",
-                        connection_id
-                    );
-                }
+        AnyPacket::Framework(framework) => match framework {
+            FrameworkMessage::RegisterUDP { connection_id } => {
+                handle_register_udp(state, connection_id, addr).await;
             }
-        }
-        Ok(packet) => {
-            // Handle other UDP packets if necessary (e.g. game data)
-            // For now, we only care about registration or forwarding
-            info!("UDP: Unhandled packet {:?}", packet);
-        }
-        Err(e) => {
-            error!("Error parsing UDP packet from {}: {}", addr, e);
-        }
+            FrameworkMessage::KeepAlive => {
+                info!("DO SOMETHING WITH THIS");
+            }
+            _ => panic!("Unhandled UDP packet: {:?}", framework),
+        },
+        _ => panic!("UDP: Unhandled packet {:?}", packet),
     }
     Ok(())
 }
 
-async fn handle_connection(
-    state: Arc<AppState>,
-    socket: tokio::net::TcpStream,
-) -> anyhow::Result<()> {
+async fn handle_register_udp(state: &Arc<AppState>, connection_id: i32, addr: SocketAddr) {
+    if let Some((_, pending_conn)) = state.pending_connections.remove(&connection_id) {
+        info!(
+            "Registering UDP for connection {} at {}",
+            connection_id, addr
+        );
+
+        state.connections.insert(
+            connection_id,
+            ConnectionState {
+                id: pending_conn.id,
+                tx: pending_conn.tx,
+                last_write_time: pending_conn.last_write_time,
+                created_at: pending_conn.created_at,
+                rate: pending_conn.rate,
+                udp_addr: addr,
+            },
+        );
+    } else {
+        info!(
+            "Received RegisterUDP for unknown connection {}",
+            connection_id
+        );
+        return;
+    };
+
+    let packet = AnyPacket::Framework(FrameworkMessage::RegisterUDP { connection_id });
+
+    if let Err(e) = state.send(packet, connection_id).await {
+        error!("Failed to send RegisterUDP reply via TCP: {}", e);
+    }
+}
+
+async fn handle_connection(state: Arc<AppState>, socket: TcpStream) -> anyhow::Result<()> {
     let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
 
-    let (tx, mut rx) = mpsc::channel(100);
+    let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
 
-    // Register connection
-    state.connections.insert(
+    register_pending_connection(&state, connection_id, tx.clone());
+
+    let (reader, writer) = socket.into_split();
+    let write_handle = spawn_write_handler(rx, writer);
+
+    send_register_tcp(&state.clone(), connection_id).await?;
+    process_tcp_stream(state.clone(), connection_id, reader).await?;
+
+    // Cleanup
+    state.disconnect(connection_id).await?;
+
+    write_handle.abort();
+
+    info!("Connection {} cleanup complete", connection_id);
+    Ok(())
+}
+
+fn register_pending_connection(
+    state: &Arc<AppState>,
+    connection_id: i32,
+    tx: mpsc::Sender<bytes::Bytes>,
+) {
+    state.pending_connections.insert(
         connection_id,
-        ConnectionState {
+        PendingConnectionState {
             id: connection_id,
-            room_id: None,
-            is_host: false,
-            tx: tx.clone(),
-            udp_addr: None,
+            tx,
+            rate: RateLimiter::new(PACKET_RATE_LIMIT, PACKET_RATE_LIMIT_WINDOW),
             last_write_time: Instant::now(),
+            created_at: Instant::now(),
         },
     );
-
     info!("Connection {} registered", connection_id);
+}
 
-    // Split socket
-    let (mut reader, mut writer) = socket.into_split();
-
-    // Spawn Write Loop
-    let write_handle = tokio::spawn(async move {
+fn spawn_write_handler(
+    mut rx: mpsc::Receiver<bytes::Bytes>,
+    mut writer: tokio::net::tcp::OwnedWriteHalf,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
         while let Some(bytes) = rx.recv().await {
             if let Err(e) = writer.write_all(&bytes).await {
                 error!("Write error: {}", e);
                 break;
             }
         }
-    });
+    })
+}
 
-    // Send RegisterTCP to client
-    let mut write_buf: BytesMut = BytesMut::new();
-    let register_packet = AnyPacket::Framework(FrameworkMessage::RegisterTCP { connection_id });
+async fn send_register_tcp(state: &Arc<AppState>, connection_id: i32) -> anyhow::Result<()> {
+    let packet = AnyPacket::Framework(FrameworkMessage::RegisterTCP { connection_id });
 
-    register_packet.write(&mut write_buf);
+    state
+        .send(packet, connection_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to send RegisterTCP: {}", e))
+}
 
-    if let Err(e) = tx.send(write_buf.freeze()).await {
-        error!("Failed to send RegisterTCP: {}", e);
-        return Ok(());
-    }
-
-    // Read Loop
-    let mut buf = BytesMut::with_capacity(BUFFER_SIZE);
-    let mut tmp_buf = [0u8; BUFFER_SIZE];
-    let mut tick_interval = tokio::time::interval(Duration::from_millis(KEEP_ALIVE_INTERVAL));
+async fn process_tcp_stream(
+    state: Arc<AppState>,
+    connection_id: i32,
+    mut reader: tokio::net::tcp::OwnedReadHalf,
+) -> anyhow::Result<()> {
+    let mut buf = BytesMut::with_capacity(TCP_BUFFER_SIZE);
+    let mut tmp_buf = [0u8; TCP_BUFFER_SIZE];
+    let mut tick_interval = tokio::time::interval(Duration::from_secs(TICK_INTERVAL_SECS));
     let mut last_read_time = Instant::now();
 
     loop {
         tokio::select! {
             read_result = reader.read(&mut tmp_buf) => {
                 match read_result {
-                    Ok(n) if n == 0 => {
+                    Ok(0) => {
                         info!("Connection {} closed by peer", connection_id);
                         break;
                     }
@@ -209,45 +218,7 @@ async fn handle_connection(
                         last_read_time = Instant::now();
                         buf.extend_from_slice(&tmp_buf[..n]);
 
-                        loop {
-                            info!("TCP: Received {} bytes from connection {}", n, connection_id);
-
-                            if buf.len() < PACKET_LENGTH_LENGTH {
-                                break;
-                            }
-
-                            // Peek length
-                            let len = {
-                                let mut cur = Cursor::new(&buf[..]);
-                                cur.get_u16() as usize
-                            };
-
-                            if buf.len() < PACKET_LENGTH_LENGTH + len {
-                                break;
-                            }
-
-                            buf.advance(PACKET_LENGTH_LENGTH);
-
-                            // Extract payload
-                            let payload = buf.split_to(len);
-                            let mut cursor = Cursor::new(&payload[..]);
-
-                            match AnyPacket::read(&mut cursor) {
-                                Ok(packet) => {
-                                    info!("TCP: Received packet {:?} from connection {}", packet, connection_id);
-
-                                    if let Err(e) = handle_packet(&state, connection_id, packet).await {
-                                        error!("Error handling packet for connection {}: {}", connection_id, e);
-                                        // Depending on severity, we might want to close connection
-                                        // For now, log and continue
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("Error parsing packet for connection {} with size {}: {}", connection_id,len, e);
-                                    // Packet is consumed and discarded
-                                }
-                            }
-                        }
+                        process_buffer(&state, connection_id, &mut buf).await?;
                     }
                     Err(e) => {
                         error!("Read error for connection {}: {}", connection_id, e);
@@ -256,37 +227,89 @@ async fn handle_connection(
                 }
             }
             _ = tick_interval.tick() => {
-                if last_read_time.elapsed() > Duration::from_millis(CONNECTION_TIME_OUT) {
-                    info!("Connection {} timed out", connection_id);
+                if !handle_tick(&state, connection_id, last_read_time).await {
                     break;
                 }
+            }
+        }
+    }
+    Ok(())
+}
 
-                let should_send = if let Some(conn) = state.connections.get(&connection_id) {
-                     conn.last_write_time.elapsed() > Duration::from_secs(8)
-                } else {
-                     break;
-                };
+async fn process_buffer(
+    state: &Arc<AppState>,
+    connection_id: i32,
+    buf: &mut BytesMut,
+) -> anyhow::Result<()> {
+    loop {
+        if buf.len() < PACKET_LENGTH_LENGTH {
+            break;
+        }
 
-                if should_send {
-                    let mut buf = BytesMut::new();
-                    let packet = AnyPacket::Framework(FrameworkMessage::KeepAlive);
-                    packet.write(&mut buf);
-                    if tx.send(buf.freeze()).await.is_err() {
-                        break;
-                    }
-                    if let Some(mut conn) = state.connections.get_mut(&connection_id) {
-                        conn.last_write_time = Instant::now();
-                    }
+        let len = {
+            let mut cur = Cursor::new(&buf[..]);
+            cur.get_u16() as usize
+        };
+
+        if buf.len() < PACKET_LENGTH_LENGTH + len {
+            break;
+        }
+
+        buf.advance(PACKET_LENGTH_LENGTH);
+
+        let payload = buf.split_to(len);
+        let mut cursor = Cursor::new(&payload[..]);
+
+        match AnyPacket::read(&mut cursor) {
+            Err(e) => {
+                error!(
+                    "Error parsing packet for connection {} with size {}: {}",
+                    connection_id, len, e
+                );
+            }
+            Ok(packet) => {
+                info!(
+                    "TCP: Received packet {:?} from connection {}",
+                    packet, connection_id
+                );
+
+                if let Err(e) = handle_packet(state, connection_id, packet).await {
+                    error!(
+                        "Error handling packet for connection {}: {}",
+                        connection_id, e
+                    );
                 }
             }
         }
     }
 
-    // Cleanup
-    state.connections.remove(&connection_id);
-    write_handle.abort();
-    info!("Connection {} cleanup complete", connection_id);
     Ok(())
+}
+
+async fn handle_tick(state: &Arc<AppState>, connection_id: i32, last_read_time: Instant) -> bool {
+    if last_read_time.elapsed() > Duration::from_millis(CONNECTION_TIME_OUT_MS) {
+        info!("Connection {} timed out", connection_id);
+        return false;
+    }
+
+    let should_send = if let Some(conn) = state.connections.get(&connection_id) {
+        conn.last_write_time.elapsed() > Duration::from_millis(KEEP_ALIVE_INTERVAL_MS)
+    } else if let Some(conn) = state.pending_connections.get(&connection_id) {
+        conn.last_write_time.elapsed() > Duration::from_millis(KEEP_ALIVE_INTERVAL_MS)
+    } else {
+        info!("Unknown connection id: {}", connection_id);
+        return false;
+    };
+
+    if should_send {
+        let packet = AnyPacket::Framework(FrameworkMessage::KeepAlive);
+
+        if let Err(err) = state.send(packet, connection_id).await {
+            error!("Fail to send keep alive: {}", err)
+        };
+    }
+
+    true
 }
 
 async fn handle_packet(
@@ -295,21 +318,39 @@ async fn handle_packet(
     packet: AnyPacket,
 ) -> anyhow::Result<()> {
     match packet {
-        AnyPacket::Framework(msg) => match msg {
-            FrameworkMessage::Ping { id, is_reply } => {
-                if !is_reply {
-                    let pong = AnyPacket::Framework(FrameworkMessage::Ping { id, is_reply: true });
-                    send_packet(state, connection_id, pong).await;
-                }
-            }
-            FrameworkMessage::KeepAlive => {}
-            _ => {}
-        },
-        AnyPacket::App(app_msg) => {
-            handle_app_packet(state, connection_id, app_msg).await?;
+        AnyPacket::Framework(packet) => {
+            handle_framework(state, connection_id, packet).await?;
+        }
+        AnyPacket::App(packet) => {
+            handle_app_packet(state, connection_id, packet).await?;
         }
         AnyPacket::Raw(_) => todo!("Handle raw packet {:?}", packet),
     }
+
+    Ok(())
+}
+
+async fn handle_framework(
+    state: &Arc<AppState>,
+    connection_id: i32,
+    packet: FrameworkMessage,
+) -> anyhow::Result<()> {
+    match packet {
+        FrameworkMessage::Ping { id, is_reply } => {
+            if !is_reply {
+                let packet = AnyPacket::Framework(FrameworkMessage::Ping { id, is_reply: true });
+
+                state.send(packet, connection_id).await?;
+            }
+        }
+        FrameworkMessage::KeepAlive => {
+            if let Some(mut conn) = state.connections.get_mut(&connection_id) {
+                conn.last_write_time = Instant::now();
+            }
+        }
+        _ => panic!("Unhandled packet: {:?}", packet),
+    }
+
     Ok(())
 }
 
@@ -318,51 +359,49 @@ async fn handle_app_packet(
     connection_id: i32,
     packet: AppPacket,
 ) -> anyhow::Result<()> {
-    match packet {
-        AppPacket::RoomJoin(pkt) => {
-            info!("Connection {} joining room {}", connection_id, pkt.room_id);
-            if let Some(mut conn) = state.connections.get_mut(&connection_id) {
-                conn.room_id = Some(pkt.room_id.clone());
-            }
-        }
-        AppPacket::Message(pkt) => {
-            info!("Connection {} sent message: {}", connection_id, pkt.message);
-        }
-        AppPacket::RoomCreationRequest(RoomCreationRequestPacket {
-            version,
-            password,
-            data,
-        }) => {
-            send_packet(
-                state,
-                connection_id,
-                AnyPacket::App(AppPacket::RoomLink(RoomLinkPacket {
-                    room_id: Uuid::now_v7().to_string(),
-                })),
-            )
-            .await;
-        }
-        _ => todo!("Handle app packet {:?}", packet),
-    }
-    Ok(())
-}
+    let room = state.rooms.find_connection_room(&connection_id);
 
-async fn send_packet(state: &Arc<AppState>, connection_id: i32, packet: AnyPacket) {
-    let tx = if let Some(conn) = state.connections.get(&connection_id) {
-        Some(conn.tx.clone())
-    } else {
-        None
+    let is_rate_limited = {
+        let mut connection = state
+            .connections
+            .get_mut(&connection_id)
+            .expect("Connection must exist");
+
+        room.map(|r| r.host_connection_id == connection_id)
+            .unwrap_or(true)
+            && !connection.rate.allow()
     };
 
-    if let Some(tx) = tx {
-        let mut buf = BytesMut::new();
-        packet.write(&mut buf);
-        if let Ok(_) = tx.send(buf.freeze()).await {
-            if let Some(mut conn) = state.connections.get_mut(&connection_id) {
-                conn.last_write_time = Instant::now();
-            }
-        }
-    } else {
-        error!("No connection found for ID {}", connection_id);
+    if is_rate_limited {
+        info!("Connection rate limited: {}", connection_id);
+        state.disconnect(connection_id).await?;
+        return Err(anyhow!("Rate limited"));
     }
+
+    match packet {
+        AppPacket::RoomJoin(package) => {
+            // Add pending request
+            state.rooms.join(connection_id, &package.room_id);
+        }
+        AppPacket::RoomCreationRequest(RoomCreationRequestPacket {
+            version: _,
+            password,
+            data: stats,
+        }) => {
+            let room_id = state.rooms.create(RoomInit {
+                connection_id,
+                password,
+                stats,
+            });
+
+            let packet = AnyPacket::App(AppPacket::RoomLink(RoomLinkPacket {
+                room_id: room_id.clone(),
+            }));
+
+            state.send(packet, connection_id).await?;
+        }
+        _ => info!("Handle app packet {:?}", packet),
+    }
+
+    Ok(())
 }

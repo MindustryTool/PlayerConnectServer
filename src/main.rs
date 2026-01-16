@@ -4,6 +4,8 @@ mod packets;
 mod state;
 mod proxy_server;
 mod http_server;
+mod utils;
+mod rate;
 
 use crate::config::Config;
 use crate::state::AppState;
