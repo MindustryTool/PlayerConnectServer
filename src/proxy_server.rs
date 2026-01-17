@@ -108,7 +108,6 @@ async fn accept_tcp_connection(
 ) -> anyhow::Result<()> {
     loop {
         let (socket, addr) = listener.accept().await?;
-        info!("New connection from {}", addr);
 
         let state = state.clone();
         let udp_socket = udp_socket.clone();
@@ -116,6 +115,8 @@ async fn accept_tcp_connection(
         tokio::spawn(async move {
             let _ = socket.set_nodelay(true);
             let id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
+
+            info!("New connection {} from {}", id, addr);
 
             let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
             let limiter = Arc::new(AtomicRateLimiter::new(
