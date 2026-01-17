@@ -321,7 +321,7 @@ impl ConnectionActor {
                 buffer,
             }) => {
                 if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
-                    if let Ok(rooms) = self.state.rooms.rooms.read() {
+                    if let Some(rooms) = self.state.rooms.read() {
                         let is_owner = rooms
                             .get(&room_id)
                             .map(|r| r.host_connection_id == self.id)

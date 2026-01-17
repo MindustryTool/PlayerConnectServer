@@ -6,7 +6,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::mpsc;
 use tracing::{error, info};
@@ -54,7 +54,7 @@ pub struct Player {
 }
 
 pub struct Rooms {
-    pub rooms: RwLock<HashMap<String, Room>>,
+    rooms: RwLock<HashMap<String, Room>>,
     tx: tokio::sync::broadcast::Sender<RoomUpdate>,
 }
 
@@ -83,6 +83,10 @@ impl Rooms {
             .iter()
             .find(|(_, room)| room.members.contains_key(&connection_id))
             .map(|(id, _)| id.clone())
+    }
+
+    pub fn read(&self) -> Option<RwLockReadGuard<'_, HashMap<String, Room>>> {
+        self.rooms.read().ok()
     }
 
     pub fn join(

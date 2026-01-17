@@ -64,7 +64,7 @@ async fn room_page(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let stats = {
-        if let Ok(rooms) = state.rooms.rooms.read() {
+        if let Some(rooms) = state.rooms.read() {
             rooms.get(&room_id).map(|r| r.stats.clone())
         } else {
             None
