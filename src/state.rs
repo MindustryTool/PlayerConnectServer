@@ -55,6 +55,8 @@ pub struct Player {
 pub struct Rooms {
     pub rooms: RwLock<HashMap<String, Room>>,
     pub tx: tokio::sync::broadcast::Sender<RoomUpdate>,
+    // Keep a receiver to prevent the channel from closing when all clients disconnect
+    pub _rx: tokio::sync::broadcast::Receiver<RoomUpdate>,
 }
 
 pub struct RoomInit {
@@ -195,11 +197,12 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
-        let (tx, _) = tokio::sync::broadcast::channel(1024);
+        let (tx, rx) = tokio::sync::broadcast::channel(1024);
         Self {
             rooms: Rooms {
                 rooms: RwLock::new(HashMap::new()),
                 tx,
+                _rx: rx,
             },
             connections: RwLock::new(HashMap::new()),
             udp_routes: RwLock::new(HashMap::new()),
