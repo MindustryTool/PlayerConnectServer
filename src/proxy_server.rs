@@ -88,10 +88,6 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
 
 async fn handle_register_udp(state: &Arc<AppState>, connection_id: i32, addr: SocketAddr) {
     if let Some(sender) = state.get_sender(connection_id) {
-        info!(
-            "Registering UDP for connection {} at {}",
-            connection_id, addr
-        );
         if let Err(e) = sender.try_send(ConnectionAction::RegisterUDP(addr)) {
             info!(
                 "Failed to register UDP for connection {}: {}",
@@ -107,7 +103,7 @@ async fn accept_tcp_connection(
     udp_socket: Arc<UdpSocket>,
 ) -> anyhow::Result<()> {
     loop {
-        let (socket, addr) = listener.accept().await?;
+        let (socket, _) = listener.accept().await?;
 
         let state = state.clone();
         let udp_socket = udp_socket.clone();
@@ -115,8 +111,6 @@ async fn accept_tcp_connection(
         tokio::spawn(async move {
             let _ = socket.set_nodelay(true);
             let id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
-
-            info!("New connection {} from {}", id, addr);
 
             let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
             let limiter = Arc::new(AtomicRateLimiter::new(
@@ -147,9 +141,8 @@ async fn accept_tcp_connection(
 
             if let Some(addr) = actor.udp_writer.addr {
                 state.remove_udp(addr);
+                info!("Connection {} closed", id);
             }
-
-            info!("Connection {} cleanup complete", id);
         });
     }
 }
@@ -226,6 +219,7 @@ impl ConnectionActor {
                 }
             }
         }
+
         Ok(())
     }
 
@@ -347,7 +341,7 @@ impl ConnectionActor {
                             room.stats = p.data;
                             room.updated_at = current_time_millis();
 
-                            if let Err(err) = self.state.tx.send(RoomUpdate::Update {
+                            if let Err(err) = self.state.rooms.tx.send(RoomUpdate::Update {
                                 id: room.id.clone(),
                                 data: room.stats.clone(),
                             }) {
@@ -617,7 +611,14 @@ impl ConnectionActor {
                 return Err(anyhow::anyhow!("Closed"));
             }
             ConnectionAction::RegisterUDP(addr) => {
+                if self.udp_writer.addr.is_some() {
+                    return Ok(());
+                }
+
                 self.udp_writer.set_addr(addr);
+
+                info!("New connection {} from {}", self.id, addr);
+
                 // Register in state
                 if let Some(sender) = self.state.get_sender(self.id) {
                     self.state.register_udp(addr, sender, self.limiter.clone());

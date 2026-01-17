@@ -11,6 +11,8 @@ use axum::{
 use futures::stream::{once, Stream};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tracing::info;
@@ -36,7 +38,7 @@ async fn ping() -> impl IntoResponse {
 async fn rooms_sse(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<Event, axum::BoxError>>> {
-    let rx = state.tx.subscribe();
+    let rx = state.rooms.tx.subscribe();
     let stream = BroadcastStream::new(rx);
 
     let initial_rooms: Vec<RoomUpdateEvent> = {
@@ -62,22 +64,25 @@ async fn rooms_sse(
             .map_err(axum::BoxError::from)
     });
 
-    let update_stream = stream.map(|msg| match msg {
+    let update_stream = stream.filter_map(|msg| match msg {
         Ok(update) => {
-            let event = match update {
-                RoomUpdate::Update { id, data } => {
-                    Event::default().event("update").json_data(RoomUpdateEvent {
+            let data = match update {
+                RoomUpdate::Update { id, data } => Event::default()
+                    .event("update")
+                    .json_data(RoomUpdateEvent {
                         room_id: id.clone(),
                         data: data.clone(),
                     })
-                }
+                    .map_err(axum::BoxError::from),
                 RoomUpdate::Remove(id) => Event::default()
                     .event("remove")
-                    .json_data(RemoveRemoveEvent { room_id: id }),
+                    .json_data(RemoveRemoveEvent { room_id: id })
+                    .map_err(axum::BoxError::from),
             };
-            event.map_err(|e| axum::BoxError::from(e))
+
+            Some(data)
         }
-        Err(e) => Err(axum::BoxError::from(e)),
+        Err(BroadcastStreamRecvError::Lagged(_)) => None,
     });
 
     let stream = init_stream.chain(update_stream);

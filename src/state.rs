@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
-use tokio::sync::broadcast::Receiver;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -55,6 +54,7 @@ pub struct Player {
 
 pub struct Rooms {
     pub rooms: RwLock<HashMap<String, Room>>,
+    pub tx: tokio::sync::broadcast::Sender<RoomUpdate>,
 }
 
 pub struct RoomInit {
@@ -154,7 +154,7 @@ impl Rooms {
         room_id
     }
 
-    pub fn close(&self, room_id: &String) -> bool {
+    pub fn close(&self, room_id: &String) {
         let removed = {
             if let Ok(mut rooms) = self.rooms.write() {
                 rooms.remove(room_id)
@@ -163,7 +163,11 @@ impl Rooms {
             }
         };
 
-        removed.is_some()
+        if removed.is_some() {
+            if let Err(err) = self.tx.send(RoomUpdate::Remove(room_id.clone())) {
+                error!("Failed to send remove room event: {}", err);
+            };
+        }
     }
 
     pub fn broadcast(&self, room_id: &str, action: ConnectionAction, exclude_id: Option<i32>) {
@@ -183,7 +187,6 @@ impl Rooms {
 }
 
 pub struct AppState {
-    pub tx: tokio::sync::broadcast::Sender<RoomUpdate>,
     pub rooms: Rooms,
     pub connections: RwLock<HashMap<i32, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
     pub udp_routes:
@@ -192,12 +195,12 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
-        let (tx, _) = tokio::sync::broadcast::channel(100);
+        let (tx, _) = tokio::sync::broadcast::channel(1024);
         Self {
             rooms: Rooms {
                 rooms: RwLock::new(HashMap::new()),
+                tx,
             },
-            tx,
             connections: RwLock::new(HashMap::new()),
             udp_routes: RwLock::new(HashMap::new()),
         }
@@ -291,7 +294,6 @@ impl AppState {
                 }
 
                 self.rooms.close(&room_id);
-                let _ = self.tx.send(RoomUpdate::Remove(room_id));
             }
         }
     }
