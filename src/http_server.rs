@@ -86,7 +86,11 @@ async fn rooms_sse(
 
     let stream = init_stream.chain(update_stream);
 
-    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(3))
+            .text(": keep-alive\n\n"),
+    )
 }
 
 async fn room_page(
