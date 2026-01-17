@@ -54,8 +54,7 @@ pub struct Player {
 }
 
 pub struct Rooms {
-    rooms: RwLock<HashMap<String, Room>>,
-    tx: tokio::sync::broadcast::Sender<RoomUpdate>,
+    pub rooms: RwLock<HashMap<String, Room>>,
 }
 
 pub struct RoomInit {
@@ -155,7 +154,7 @@ impl Rooms {
         room_id
     }
 
-    pub fn close(&self, room_id: &String) {
+    pub fn close(&self, room_id: &String) -> bool {
         let removed = {
             if let Ok(mut rooms) = self.rooms.write() {
                 rooms.remove(room_id)
@@ -164,14 +163,7 @@ impl Rooms {
             }
         };
 
-        if removed.is_some() {
-            let _ = self.tx.send(RoomUpdate::Remove(room_id.clone()));
-            info!("Room removed: {}", room_id);
-        }
-    }
-
-    pub fn subscribe(&self) -> Receiver<RoomUpdate> {
-        self.tx.subscribe()
+        removed.is_some()
     }
 
     pub fn broadcast(&self, room_id: &str, action: ConnectionAction, exclude_id: Option<i32>) {
@@ -189,6 +181,7 @@ impl Rooms {
 }
 
 pub struct AppState {
+    pub tx: tokio::sync::broadcast::Sender<RoomUpdate>,
     pub rooms: Rooms,
     pub connections: RwLock<HashMap<i32, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
     pub udp_routes:
@@ -201,8 +194,8 @@ impl AppState {
         Self {
             rooms: Rooms {
                 rooms: RwLock::new(HashMap::new()),
-                tx,
             },
+            tx,
             connections: RwLock::new(HashMap::new()),
             udp_routes: RwLock::new(HashMap::new()),
         }
@@ -296,6 +289,7 @@ impl AppState {
                 }
 
                 self.rooms.close(&room_id);
+                let _ = self.tx.send(RoomUpdate::Remove(room_id));
             }
         }
     }
@@ -303,16 +297,17 @@ impl AppState {
 
 #[derive(Clone, Debug)]
 pub enum RoomUpdate {
-    Update(RoomDisplay),
+    Update { id: String, data: Stats },
     Remove(String),
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct RoomDisplay {
-    pub id: String,
-    pub host_connection_id: i32,
-    pub password: bool,
-    pub players: usize,
-    pub max_players: usize,
-    pub stats: Stats,
+pub struct RemoveRemoveEvent {
+    pub room_id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RoomUpdateEvent {
+    pub room_id: String,
+    pub data: Stats,
 }

@@ -1,4 +1,4 @@
-use crate::state::{AppState, RoomUpdate};
+use crate::state::{AppState, RemoveRemoveEvent, RoomUpdate, RoomUpdateEvent};
 use axum::{
     extract::{Path, State},
     response::{
@@ -8,7 +8,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use futures::stream::Stream;
+use futures::stream::{Stream, once};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_stream::wrappers::BroadcastStream;
@@ -36,24 +36,51 @@ async fn ping() -> impl IntoResponse {
 async fn rooms_sse(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<Event, axum::BoxError>>> {
-    let rx = state.rooms.subscribe();
+    let rx = state.tx.subscribe();
     let stream = BroadcastStream::new(rx);
 
-    // Initial state: Send all current rooms
-    // We need to construct a stream that starts with current rooms and then follows updates
-    // For simplicity here, we just subscribe to updates.
-    // Ideally, we should send an initial "snapshot" event or individual add events.
+    let initial_rooms: Vec<RoomUpdateEvent> = {
+        let rooms = state.rooms.read();
 
-    let stream = stream.map(|msg| match msg {
+        if let Some(rooms) = rooms {
+            rooms
+                .iter()
+                .map(|(key, room)| RoomUpdateEvent {
+                    room_id: key.clone(),
+                    data: room.stats.clone(),
+                })
+                .collect()
+        } else {
+            vec![]
+        }
+    };
+
+    let init_stream = once(async move {
+        Event::default()
+            .event("update")
+            .json_data(initial_rooms)
+            .map_err(axum::BoxError::from)
+    });
+
+    let update_stream = stream.map(|msg| match msg {
         Ok(update) => {
             let event = match update {
-                RoomUpdate::Update(room) => Event::default().event("update").json_data(room.stats),
-                RoomUpdate::Remove(id) => Ok({ Event::default().event("remove").data(id) }),
+                RoomUpdate::Update { id, data } => {
+                    Event::default().event("update").json_data(RoomUpdateEvent {
+                        room_id: id.clone(),
+                        data: data.clone(),
+                    })
+                }
+                RoomUpdate::Remove(id) => Event::default()
+                    .event("remove")
+                    .json_data(RemoveRemoveEvent { room_id: id }),
             };
             event.map_err(|e| axum::BoxError::from(e))
         }
         Err(e) => Err(axum::BoxError::from(e)),
     });
+
+    let stream = init_stream.chain(update_stream);
 
     Sse::new(stream)
         .keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(10)))

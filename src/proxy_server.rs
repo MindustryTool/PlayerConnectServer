@@ -1,8 +1,11 @@
+use crate::constant::{ArcCloseReason, MessageType};
 use crate::packets::{
-    AnyPacket, AppPacket, ConnectionPacketWrapPacket, FrameworkMessage, RoomLinkPacket,
+    AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionPacketWrapPacket, FrameworkMessage,
+    Message2Packet, MessagePacket, RoomLinkPacket,
 };
 use crate::rate::AtomicRateLimiter;
 use crate::state::{AppState, ConnectionAction, RoomInit};
+use crate::utils::current_time_millis;
 use anyhow::anyhow;
 use bytes::{Buf, BytesMut};
 use std::io::Cursor;
@@ -123,6 +126,7 @@ async fn accept_tcp_connection(
                 udp_writer: UdpWriter::new(udp_socket),
                 limiter,
                 last_read: Instant::now(),
+                packet_queue: Vec::new(),
             };
 
             if let Err(e) = actor.run(reader).await {
@@ -148,6 +152,7 @@ struct ConnectionActor {
     udp_writer: UdpWriter,
     limiter: Arc<AtomicRateLimiter>,
     last_read: Instant,
+    packet_queue: Vec<AnyPacket>,
 }
 
 impl ConnectionActor {
@@ -172,11 +177,6 @@ impl ConnectionActor {
                         Ok(0) => break, // EOF
                         Ok(n) => {
                             self.last_read = Instant::now();
-
-                            if !self.limiter.check() {
-                                info!("TCP Rate limit exceeded for {}", self.id);
-                                break;
-                            }
 
                             buf.extend_from_slice(&tmp_buf[..n]);
                             self.process_tcp_buffer(&mut buf).await?;
@@ -243,19 +243,62 @@ impl ConnectionActor {
     }
 
     async fn handle_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {
-        info!("Received packet: {:?}", packet);
+        let is_framework = matches!(packet, AnyPacket::Framework(_));
+        if !is_framework {
+            let room_id_opt = self.state.rooms.find_connection_room_id(self.id);
+            let is_host = if let Some(ref room_id) = room_id_opt {
+                if let Some(rooms) = self.state.rooms.read() {
+                    rooms
+                        .get(room_id)
+                        .map(|r| r.host_connection_id == self.id)
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !is_host && !self.limiter.check() {
+                if let Some(ref room_id) = room_id_opt {
+                    self.state.rooms.broadcast(
+                        room_id,
+                        ConnectionAction::SendTCP(AnyPacket::App(AppPacket::Message2(
+                            Message2Packet {
+                                message: MessageType::PacketSpamming,
+                            },
+                        ))),
+                        None,
+                    );
+                }
+
+                self.write_packet(AnyPacket::App(AppPacket::ConnectionClosed(
+                    ConnectionClosedPacket {
+                        connection_id: self.id,
+                        reason: ArcCloseReason::Closed,
+                    },
+                )))
+                .await?;
+
+                warn!("Connection {} disconnected for packet spamming.", self.id);
+                return Err(anyhow!("Packet Spamming"));
+            }
+        }
 
         match packet {
             AnyPacket::Framework(f) => self.handle_framework(f).await?,
             AnyPacket::App(a) => self.handle_app(a).await?,
             AnyPacket::Raw(bytes) => {
-                // TODO: Queue
                 if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
-                    self.state
-                        .rooms
-                        .broadcast(&room_id, ConnectionAction::SendTCPRaw(bytes), None);
+                    self.state.rooms.broadcast(
+                        &room_id,
+                        ConnectionAction::SendTCPRaw(bytes),
+                        Some(self.id),
+                    );
                 } else {
-                    info!("No room found for connection {}", self.id);
+                    if self.packet_queue.len() < 16 {
+                        self.packet_queue.push(AnyPacket::Raw(bytes));
+                    }
                 }
             }
         }
@@ -287,21 +330,117 @@ impl ConnectionActor {
 
     async fn handle_app(&mut self, packet: AppPacket) -> anyhow::Result<()> {
         match packet {
-            AppPacket::RoomJoin(p) => {
-                let Some(sender) = self.state.get_sender(self.id) else {
-                    return Err(anyhow::anyhow!(
-                        "No sender found for connection {}",
-                        self.id
-                    ));
-                };
-                self.state.rooms.join(self.id, &p.room_id, sender)?;
-            }
-            AppPacket::RoomCreationRequest(p) => {
+            AppPacket::Stats(p) => {
                 if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
-                    info!("Connection {} already in room {}", self.id, room_id);
+                    if let Ok(mut rooms) = self.state.rooms.rooms.write() {
+                        if let Some(room) = rooms.get_mut(&room_id) {
+                            room.stats = p.data;
+                            room.updated_at = current_time_millis();
+                        }
+                    }
+                }
+            }
+            AppPacket::RoomJoin(p) => {
+                if let Some(current_room_id) = self.state.rooms.find_connection_room_id(self.id) {
+                    let is_host = if let Some(rooms) = self.state.rooms.read() {
+                        rooms
+                            .get(&current_room_id)
+                            .map(|r| r.host_connection_id == self.id)
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
 
+                    if is_host {
+                        self.write_packet(AnyPacket::App(AppPacket::Message2(Message2Packet {
+                            message: MessageType::AlreadyHosting,
+                        })))
+                        .await?;
+
+                        warn!(
+                            "Connection {} tried to join room {} but is already hosting {}",
+                            self.id, p.room_id, current_room_id
+                        );
+                        return Ok(());
+                    }
+
+                    info!(
+                        "Connection {} left room {} to join {}",
+                        self.id, current_room_id, p.room_id
+                    );
+                    self.state.rooms.leave(self.id);
+                }
+
+                let (can_join, wrong_password) = (|| {
+                    let rooms = self.state.rooms.read()?;
+                    let room = rooms.get(&p.room_id)?;
+
+                    if let Some(ref pass) = room.password {
+                        if pass != &p.password {
+                            return Some((false, true));
+                        }
+                    }
+
+                    Some((true, false))
+                })()
+                .unwrap_or((false, false));
+
+                if wrong_password {
+                    info!(
+                        "Connection {} tried to join room {} with wrong password.",
+                        self.id, p.room_id
+                    );
+                    self.write_packet(AnyPacket::App(AppPacket::Message(MessagePacket {
+                        message: "Wrong password".to_string(),
+                    })))
+                    .await?;
                     return Ok(());
                 }
+
+                if !can_join {
+                    info!(
+                        "Connection {} tried to join a non-existent room {}.",
+                        self.id, p.room_id
+                    );
+                    self.write_packet(AnyPacket::App(AppPacket::ConnectionClosed(
+                        ConnectionClosedPacket {
+                            connection_id: self.id,
+                            reason: ArcCloseReason::Error,
+                        },
+                    )))
+                    .await?;
+                    return Ok(());
+                }
+
+                if let Some(sender) = self.state.get_sender(self.id) {
+                    self.state.rooms.join(self.id, &p.room_id, sender)?;
+                    info!("Connection {} joined the room {}.", self.id, p.room_id);
+
+                    for pkt in self.packet_queue.drain(..) {
+                        self.state.rooms.broadcast(
+                            &p.room_id,
+                            match pkt {
+                                AnyPacket::Raw(b) => ConnectionAction::SendTCPRaw(b),
+                                _ => ConnectionAction::SendTCP(pkt),
+                            },
+                            Some(self.id),
+                        );
+                    }
+                }
+            }
+            AppPacket::RoomCreationRequest(p) => {
+                if let Some(current_room_id) = self.state.rooms.find_connection_room_id(self.id) {
+                    self.write_packet(AnyPacket::App(AppPacket::Message2(Message2Packet {
+                        message: MessageType::AlreadyHosting,
+                    })))
+                    .await?;
+                    warn!(
+                        "Connection {} tried to create a room but is already hosting/in the room {}.",
+                        self.id, current_room_id
+                    );
+                    return Ok(());
+                }
+
                 if let Some(sender) = self.state.get_sender(self.id) {
                     let room_id = self.state.rooms.create(RoomInit {
                         connection_id: self.id,
@@ -310,9 +449,81 @@ impl ConnectionActor {
                         sender,
                     });
                     self.write_packet(AnyPacket::App(AppPacket::RoomLink(RoomLinkPacket {
-                        room_id,
+                        room_id: room_id.clone(),
                     })))
                     .await?;
+                    info!("Room {} created by connection {}.", room_id, self.id);
+                }
+            }
+            AppPacket::RoomClosureRequest(_) => {
+                if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
+                    let is_host = if let Some(rooms) = self.state.rooms.read() {
+                        rooms
+                            .get(&room_id)
+                            .map(|r| r.host_connection_id == self.id)
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+
+                    if !is_host {
+                        self.write_packet(AnyPacket::App(AppPacket::Message2(Message2Packet {
+                            message: MessageType::RoomClosureDenied,
+                        })))
+                        .await?;
+                        warn!(
+                            "Connection {} tried to close the room {} but is not the host.",
+                            self.id, room_id
+                        );
+                        return Ok(());
+                    }
+
+                    self.state.rooms.close(&room_id);
+                    info!(
+                        "Room {} closed by connection {} (the host).",
+                        room_id, self.id
+                    );
+                }
+            }
+            AppPacket::ConnectionClosed(p) => {
+                if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
+                    let is_host = if let Some(rooms) = self.state.rooms.read() {
+                        rooms
+                            .get(&room_id)
+                            .map(|r| r.host_connection_id == self.id)
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+
+                    if !is_host {
+                        self.write_packet(AnyPacket::App(AppPacket::Message2(Message2Packet {
+                            message: MessageType::ConClosureDenied,
+                        })))
+                        .await?;
+                        warn!("Connection {} tried to close the connection {} but is not the host of room {}.", self.id, p.connection_id, room_id);
+                        return Ok(());
+                    }
+
+                    if let Some(sender) = self.state.get_sender(p.connection_id) {
+                        let target_room = self.state.rooms.find_connection_room_id(p.connection_id);
+                        if target_room.as_ref() == Some(&room_id) {
+                            info!(
+                                "Connection {} (room {}) closed the connection {}.",
+                                self.id, room_id, p.connection_id
+                            );
+
+                            let _ = sender.try_send(ConnectionAction::SendTCP(AnyPacket::App(
+                                AppPacket::ConnectionClosed(ConnectionClosedPacket {
+                                    connection_id: p.connection_id,
+                                    reason: p.reason,
+                                }),
+                            )));
+                            let _ = sender.try_send(ConnectionAction::Close);
+                        } else {
+                            warn!("Connection {} (room {}) tried to close a connection from another room.", self.id, room_id);
+                        }
+                    }
                 }
             }
             AppPacket::ConnectionPacketWrap(ConnectionPacketWrapPacket {
