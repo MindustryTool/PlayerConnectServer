@@ -4,7 +4,7 @@ use crate::packets::{
     Message2Packet, MessagePacket, RoomLinkPacket,
 };
 use crate::rate::AtomicRateLimiter;
-use crate::state::{AppState, ConnectionAction, RoomInit};
+use crate::state::{AppState, ConnectionAction, RoomInit, RoomUpdate};
 use crate::utils::current_time_millis;
 use anyhow::anyhow;
 use bytes::{Buf, BytesMut};
@@ -336,6 +336,11 @@ impl ConnectionActor {
                         if let Some(room) = rooms.get_mut(&room_id) {
                             room.stats = p.data;
                             room.updated_at = current_time_millis();
+
+                            self.state.tx.send(RoomUpdate::Update {
+                                id: room.id.clone(),
+                                data: room.stats.clone(),
+                            })?;
                         }
                     }
                 }
