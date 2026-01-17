@@ -2,13 +2,13 @@ use crate::state::{AppState, RemoveRemoveEvent, RoomUpdate, RoomUpdateEvent};
 use axum::{
     extract::{Path, State},
     response::{
-        sse::{Event, Sse},
+        sse::{Event, KeepAlive, Sse},
         Html, IntoResponse,
     },
     routing::{get, post},
     Router,
 };
-use futures::stream::{Stream, once};
+use futures::stream::{once, Stream};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_stream::wrappers::BroadcastStream;
@@ -82,8 +82,7 @@ async fn rooms_sse(
 
     let stream = init_stream.chain(update_stream);
 
-    Sse::new(stream)
-        .keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(10)))
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
 }
 
 async fn room_page(

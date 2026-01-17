@@ -173,7 +173,9 @@ impl Rooms {
                     if Some(*id) == exclude_id {
                         continue;
                     }
-                    let _ = sender.try_send(action.clone());
+                    if let Err(e) = sender.try_send(action.clone()) {
+                        info!("Failed to broadcast to {}: {}", id, e);
+                    }
                 }
             }
         }

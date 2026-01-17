@@ -64,7 +64,11 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
                                 // Normal packet, route it
                                 if let Some((sender, limiter)) = state.get_route(&addr) {
                                     if limiter.check() {
-                                        let _ = sender.try_send(ConnectionAction::SendTCP(packet));
+                                        if let Err(e) =
+                                            sender.try_send(ConnectionAction::SendTCP(packet))
+                                        {
+                                            info!("Failed to forward UDP packet: {}", e);
+                                        }
                                     }
                                 } else {
                                     // Unknown UDP sender, ignore
@@ -88,7 +92,12 @@ async fn handle_register_udp(state: &Arc<AppState>, connection_id: i32, addr: So
             "Registering UDP for connection {} at {}",
             connection_id, addr
         );
-        let _ = sender.try_send(ConnectionAction::RegisterUDP(addr));
+        if let Err(e) = sender.try_send(ConnectionAction::RegisterUDP(addr)) {
+            info!(
+                "Failed to register UDP for connection {}: {}",
+                connection_id, e
+            );
+        }
     }
 }
 
@@ -337,10 +346,12 @@ impl ConnectionActor {
                             room.stats = p.data;
                             room.updated_at = current_time_millis();
 
-                            self.state.tx.send(RoomUpdate::Update {
+                            if let Err(err) = self.state.tx.send(RoomUpdate::Update {
                                 id: room.id.clone(),
                                 data: room.stats.clone(),
-                            })?;
+                            }) {
+                                info!("Fail to broadcast room update {}", err);
+                            }
                         }
                     }
                 }
@@ -518,13 +529,22 @@ impl ConnectionActor {
                                 self.id, room_id, p.connection_id
                             );
 
-                            let _ = sender.try_send(ConnectionAction::SendTCP(AnyPacket::App(
-                                AppPacket::ConnectionClosed(ConnectionClosedPacket {
-                                    connection_id: p.connection_id,
-                                    reason: p.reason,
-                                }),
-                            )));
-                            let _ = sender.try_send(ConnectionAction::Close);
+                            if let Err(e) =
+                                sender.try_send(ConnectionAction::SendTCP(AnyPacket::App(
+                                    AppPacket::ConnectionClosed(ConnectionClosedPacket {
+                                        connection_id: p.connection_id,
+                                        reason: p.reason,
+                                    }),
+                                )))
+                            {
+                                info!(
+                                    "Failed to send connection closed packet to {}: {}",
+                                    p.connection_id, e
+                                );
+                            }
+                            if let Err(e) = sender.try_send(ConnectionAction::Close) {
+                                info!("Failed to send close action to {}: {}", p.connection_id, e);
+                            }
                         } else {
                             warn!("Connection {} (room {}) tried to close a connection from another room.", self.id, room_id);
                         }
@@ -557,7 +577,9 @@ impl ConnectionActor {
                             return Err(anyhow!("Connection not found: {}", connection_id));
                         };
 
-                        sender.try_send(action)?;
+                        if let Err(e) = sender.try_send(action) {
+                            warn!("Failed to forward packet to {}: {}", connection_id, e);
+                        }
                     }
                 } else {
                     info!("No room found for connection {}", self.id);
