@@ -2,7 +2,7 @@ use crate::{
     constant::{ArcCloseReason, CloseReason, MessageType},
     state::Stats,
 };
-use anyhow::{anyhow, Result};
+use anyhow::anyhow;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io::Cursor;
 use tracing::info;
@@ -115,7 +115,7 @@ pub struct StatsPacket {
 }
 
 impl AnyPacket {
-    pub fn read(buf: &mut Cursor<&[u8]>) -> Result<Self> {
+    pub fn read(buf: &mut Cursor<&[u8]>) -> anyhow::Result<Self> {
         if !buf.has_remaining() {
             return Err(anyhow!("Empty packet"));
         }
@@ -161,7 +161,7 @@ impl AnyPacket {
 }
 
 impl FrameworkMessage {
-    pub fn read(buf: &mut Cursor<&[u8]>) -> Result<Self> {
+    pub fn read(buf: &mut Cursor<&[u8]>) -> anyhow::Result<Self> {
         let fid = buf.get_u8();
 
         match fid {
@@ -205,7 +205,7 @@ impl FrameworkMessage {
 }
 
 impl AppPacket {
-    pub fn read(buf: &mut Cursor<&[u8]>) -> Result<Self> {
+    pub fn read(buf: &mut Cursor<&[u8]>) -> anyhow::Result<Self> {
         let pid = buf.get_u8();
 
         match pid {
@@ -343,7 +343,7 @@ impl AppPacket {
 }
 
 // Helper to read/write strings
-pub fn read_string(buf: &mut Cursor<&[u8]>) -> Result<String> {
+pub fn read_string(buf: &mut Cursor<&[u8]>) -> anyhow::Result<String> {
     if buf.remaining() < 2 {
         return Err(anyhow!(
             "Not enough bytes for string length: {}",
@@ -374,22 +374,16 @@ pub fn write_string(buf: &mut BytesMut, s: &str) {
     buf.put_slice(bytes);
 }
 
-pub fn read_stats(buf: &mut Cursor<&[u8]>) -> Result<Stats> {
+pub fn read_stats(buf: &mut Cursor<&[u8]>) -> anyhow::Result<Stats> {
     let json = read_string(buf)?;
-    info!("Stats JSON: {}", json);
 
-    // let data = serde_json::from_str(json.as_str());
-
-    Ok(Stats {
-        players: vec![],
-        map_name: String::new(),
-        name: String::new(),
-        gamemode: String::new(),
-        mods: vec![],
-        locale: String::new(),
-        version: String::new(),
-        created_at: 0,
-    })
+    match serde_json::from_str::<Stats>(&json) {
+        Ok(data) => Ok(data),
+        Err(e) => {
+            info!("Failed to parse stats: {}", json);
+            Err(anyhow!(e))
+        }
+    }
 }
 
 pub fn write_stats(buf: &mut BytesMut, stats: &Stats) {
