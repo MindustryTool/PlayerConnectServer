@@ -67,10 +67,10 @@ async fn rooms_sse(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             let data = match update {
                 RoomUpdate::Update { id, data } => Event::default()
                     .event("update")
-                    .json_data(RoomUpdateEvent {
+                    .json_data(vec![RoomUpdateEvent {
                         room_id: id.clone(),
                         data: RoomView::from(&data),
-                    })
+                    }])
                     .map_err(axum::BoxError::from),
                 RoomUpdate::Remove(id) => Event::default()
                     .event("remove")
