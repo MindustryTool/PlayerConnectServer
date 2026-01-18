@@ -229,20 +229,31 @@ impl ConnectionActor {
             if buf.len() < PACKET_LENGTH_LENGTH {
                 break;
             }
+
             let len = {
                 let mut cur = Cursor::new(&buf[..]);
                 cur.get_u16() as usize
             };
+
             if buf.len() < PACKET_LENGTH_LENGTH + len {
                 break;
             }
+
             buf.advance(PACKET_LENGTH_LENGTH);
+
             let payload = buf.split_to(len);
             let mut cursor = Cursor::new(&payload[..]);
 
-            let packet = AnyPacket::read(&mut cursor)?;
+            match AnyPacket::read(&mut cursor) {
+                Ok(packet) => {
+                    self.handle_packet(packet, true).await?;
+                }
+                Err(e) => {
+                    error!("Error reading packet: {:?}", e);
+                    continue;
+                }
+            }
             // Handle packet
-            self.handle_packet(packet, true).await?;
         }
         Ok(())
     }
