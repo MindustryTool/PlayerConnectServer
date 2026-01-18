@@ -474,6 +474,22 @@ impl ConnectionActor {
                         room_id: room_id.clone(),
                     })))
                     .await?;
+
+                    let Some(rooms) = self.state.rooms.read() else {
+                        return Err(anyhow!("Can not read rooms"));
+                    };
+
+                    let Some(room) = rooms.get(&room_id) else {
+                        return Err(anyhow!("Can not find room {}", room_id));
+                    };
+
+                    if let Err(err) = self.state.rooms.tx.send(RoomUpdate::Update {
+                        id: room.id.clone(),
+                        data: room.clone(),
+                    }) {
+                        info!("Fail to broadcast room update {}", err);
+                    }
+
                     info!("Room {} created by connection {}.", room_id, self.id);
                 }
             }
