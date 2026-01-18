@@ -54,6 +54,8 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
 
                     match AnyPacket::read(&mut cursor) {
                         Ok(packet) => {
+                            info!("Received UDP packet: {:?}", packet);
+
                             if let AnyPacket::Framework(FrameworkMessage::RegisterUDP {
                                 connection_id,
                             }) = packet
@@ -241,6 +243,8 @@ impl ConnectionActor {
             let mut cursor = Cursor::new(&payload[..]);
 
             let packet = AnyPacket::read(&mut cursor)?;
+            
+            info!("Received TCP packet: {:?}", packet);
             // Handle packet
             self.handle_packet(packet).await?;
         }
