@@ -214,14 +214,6 @@ impl AppPacket {
                     connection_id: buf.get_i32(),
                     is_tcp: buf.get_u8() == 1,
                     buffer: {
-                        let len = buf.get_i32() as usize; // Buffer length?
-                                                          // Actually java side: buffer is object.
-                                                          // If it's just raw bytes, we need length.
-                                                          // Let's assume remaining or prefixed length.
-                                                          // Usually `write(buffer, object)` writes generic object.
-                                                          // If it's ByteBuffer, it writes raw bytes?
-                                                          // NetworkProxy: ((Packets.ConnectionPacketWrapPacket) packet).buffer = (ByteBuffer) ((ByteBuffer) last.get().clear()).put(buffer).flip();
-                                                          // It seems it captures the rest of the buffer?
                         let mut b = BytesMut::new();
                         while buf.has_remaining() {
                             b.put_u8(buf.get_u8());
@@ -282,8 +274,7 @@ impl AppPacket {
                 buf.put_u8(0);
                 buf.put_i32(p.connection_id);
                 buf.put_u8(if p.is_tcp { 1 } else { 0 });
-                // Write buffer?
-                // buf.put_slice(&p.buffer);
+                buf.put_slice(&p.buffer);
             }
             AppPacket::ConnectionClosed(p) => {
                 buf.put_u8(1);

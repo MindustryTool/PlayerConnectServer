@@ -660,7 +660,7 @@ impl ConnectionActor {
                 batch.extend_from_slice(&b);
             }
             ConnectionAction::SendUDPRaw(b) => {
-                info!("Send udpudp raw: to {}", self.id);
+                info!("Send udp raw: to {}", self.id);
                 self.udp_writer.send_raw(&b).await?;
             }
             ConnectionAction::Close => {
