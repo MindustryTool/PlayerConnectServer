@@ -656,11 +656,11 @@ impl ConnectionActor {
                 self.udp_writer.send(p).await?;
             }
             ConnectionAction::SendTCPRaw(b) => {
-                info!("Send tcp raw: to {}", self.id);
+                info!("Send tcp {} bytes to {}", b.len(), self.id);
                 batch.extend_from_slice(&b);
             }
             ConnectionAction::SendUDPRaw(b) => {
-                info!("Send udp raw: to {}", self.id);
+                info!("Send udp {} bytes to {}", b.len(), self.id);
                 self.udp_writer.send_raw(&b).await?;
             }
             ConnectionAction::Close => {
