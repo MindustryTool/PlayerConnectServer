@@ -108,7 +108,7 @@ impl Rooms {
                 Some(sender) => sender,
                 None => {
                     error!(
-                        "Host {} not found in room {}",
+                        "Host {} not found in room {} while joining",
                         room.host_connection_id, room_id
                     );
                     return Ok(());
@@ -149,10 +149,10 @@ impl Rooms {
                 Some(sender) => sender,
                 None => {
                     error!(
-                        "Host {} not found in room {}",
+                        "Host {} not found in room {} while leaving",
                         room.host_connection_id, room_id
                     );
-                    return None;
+                    return Some(room_id);
                 }
             };
 
@@ -221,6 +221,8 @@ impl Rooms {
         };
 
         if removed.is_some() {
+            info!("Room closed {}", room_id);
+
             if let Err(err) = self.tx.send(RoomUpdate::Remove(room_id.clone())) {
                 error!("Failed to send remove room event: {}", err);
             };
@@ -263,7 +265,7 @@ impl Rooms {
             Some(sender) => sender,
             None => {
                 error!(
-                    "Host {} not found in room {}",
+                    "Host {} not found in room {} while forward",
                     room.host_connection_id, room_id
                 );
                 return;
@@ -372,6 +374,7 @@ impl AppState {
 
         // Handle room logic
         let room_id_opt = self.rooms.leave(connection_id);
+
         if let Some(room_id) = room_id_opt {
             // Check if host
             let should_close = {
