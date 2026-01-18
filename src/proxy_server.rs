@@ -7,7 +7,7 @@ use crate::rate::AtomicRateLimiter;
 use crate::state::{AppState, ConnectionAction, RoomInit, RoomUpdate};
 use crate::utils::current_time_millis;
 use anyhow::anyhow;
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use std::io::Cursor;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -54,8 +54,6 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
 
                     match AnyPacket::read(&mut cursor) {
                         Ok(packet) => {
-                            info!("Received UDP packet: {:?} from {:?}", packet, addr);
-
                             if let AnyPacket::Framework(FrameworkMessage::RegisterUDP {
                                 connection_id,
                             }) = packet
@@ -64,6 +62,8 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
                                 handle_register_udp(&state, connection_id, addr).await;
                             } else {
                                 // Normal packet, route it
+                                info!("Received UDP packet: {:?} from {:?}", packet, addr);
+
                                 if let Some((sender, limiter)) = state.get_route(&addr) {
                                     if limiter.check() {
                                         if let Err(e) =
@@ -158,7 +158,7 @@ struct ConnectionActor {
     udp_writer: UdpWriter,
     limiter: Arc<AtomicRateLimiter>,
     last_read: Instant,
-    packet_queue: Vec<AnyPacket>,
+    packet_queue: Vec<Bytes>,
 }
 
 impl ConnectionActor {
@@ -243,8 +243,6 @@ impl ConnectionActor {
             let mut cursor = Cursor::new(&payload[..]);
 
             let packet = AnyPacket::read(&mut cursor)?;
-
-            info!("Received TCP packet: {:?} from {}", packet, self.id);
             // Handle packet
             self.handle_packet(packet).await?;
         }
@@ -253,7 +251,10 @@ impl ConnectionActor {
 
     async fn handle_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {
         let is_framework = matches!(packet, AnyPacket::Framework(_));
+
         if !is_framework {
+            info!("Received TCP packet: {:?} from {}", packet, self.id);
+
             let room_id_opt = self.state.rooms.find_connection_room_id(self.id);
             let is_host = if let Some(ref room_id) = room_id_opt {
                 if let Some(rooms) = self.state.rooms.read() {
@@ -299,12 +300,20 @@ impl ConnectionActor {
             AnyPacket::App(a) => self.handle_app(a).await?,
             AnyPacket::Raw(bytes) => {
                 if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
-                    self.state
-                        .rooms
-                        .forward_to_host(&room_id, ConnectionAction::SendTCPRaw(bytes));
+                    self.state.rooms.forward_to_host(
+                        &room_id,
+                        ConnectionAction::SendTCP(AnyPacket::App(AppPacket::ConnectionPacketWrap(
+                            ConnectionPacketWrapPacket {
+                                connection_id: self.id,
+                                is_tcp: false,
+                                buffer: bytes,
+                            },
+                        ))),
+                    );
                 } else {
                     if self.packet_queue.len() < 16 {
-                        self.packet_queue.push(AnyPacket::Raw(bytes));
+                        self.packet_queue.push(bytes);
+                        info!("Queued raw packet for connection {}", self.id);
                     } else {
                         warn!(
                             "Connection {} packet queue full, dropping raw packet",
@@ -438,15 +447,19 @@ impl ConnectionActor {
 
                 if let Some(sender) = self.state.get_sender(self.id) {
                     self.state.rooms.join(self.id, &p.room_id, sender)?;
+
                     info!("Connection {} joined the room {}.", self.id, p.room_id);
 
-                    for pkt in self.packet_queue.drain(..) {
+                    for bytes in self.packet_queue.drain(..) {
                         self.state.rooms.forward_to_host(
                             &p.room_id,
-                            match pkt {
-                                AnyPacket::Raw(b) => ConnectionAction::SendTCPRaw(b),
-                                _ => ConnectionAction::SendTCP(pkt),
-                            },
+                            ConnectionAction::SendTCP(AnyPacket::App(
+                                AppPacket::ConnectionPacketWrap(ConnectionPacketWrapPacket {
+                                    connection_id: self.id,
+                                    is_tcp: false,
+                                    buffer: bytes,
+                                }),
+                            )),
                         );
                     }
                 }
