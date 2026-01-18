@@ -1,6 +1,7 @@
 use crate::state::{AppState, RemoveRemoveEvent, RoomUpdate, RoomUpdateEvent};
 use axum::{
     extract::{Path, State},
+    http::header,
     response::{
         sse::{Event, KeepAlive, Sse},
         Html, IntoResponse,
@@ -8,7 +9,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use futures::stream::{once, Stream};
+use futures::stream::once;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
@@ -34,9 +35,7 @@ async fn ping() -> impl IntoResponse {
     "OK"
 }
 
-async fn rooms_sse(
-    State(state): State<Arc<AppState>>,
-) -> Sse<impl Stream<Item = Result<Event, axum::BoxError>>> {
+async fn rooms_sse(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let rx = state.rooms.tx.subscribe();
     let stream = BroadcastStream::new(rx);
 
@@ -86,7 +85,14 @@ async fn rooms_sse(
 
     let stream = init_stream.chain(update_stream);
 
-    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(3)))
+    (
+        [
+            (header::CONTENT_TYPE, "text/event-stream"),
+            (header::CACHE_CONTROL, "no-cache"),
+            (header::CONNECTION, "keep-alive"),
+        ],
+        Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(3))),
+    )
 }
 
 async fn room_page(
