@@ -151,8 +151,6 @@ impl AnyPacket {
             }
         }
 
-        info!("Write packet: {:?}", self);
-
         let mut out: BytesMut = BytesMut::new();
 
         out.put_u16(payload.len() as u16);

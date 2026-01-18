@@ -1,6 +1,7 @@
 use crate::constant::{ArcCloseReason, CloseReason, MessageType};
 use crate::packets::{
-    AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionPacketWrapPacket, FrameworkMessage, Message2Packet, MessagePacket, RoomClosedPacket, RoomLinkPacket
+    AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionPacketWrapPacket, FrameworkMessage,
+    Message2Packet, MessagePacket, RoomClosedPacket, RoomLinkPacket,
 };
 use crate::rate::AtomicRateLimiter;
 use crate::state::{AppState, ConnectionAction, RoomInit, RoomUpdate};
@@ -634,19 +635,24 @@ impl ConnectionActor {
         match action {
             ConnectionAction::SendTCP(p) => {
                 let bytes = p.to_bytes();
+                info!("Send packet: {:?} to {}", p, self.id);
                 batch.extend_from_slice(&bytes);
             }
             ConnectionAction::SendUDP(p) => {
+                info!("Send udp: {:?} to {}", p, self.id);
                 self.udp_writer.send(p).await?;
             }
             ConnectionAction::SendTCPRaw(b) => {
+                info!("Send tcp raw: to {}", self.id);
                 batch.extend_from_slice(&b);
             }
             ConnectionAction::SendUDPRaw(b) => {
+                info!("Send udpudp raw: to {}", self.id);
                 self.udp_writer.send_raw(&b).await?;
             }
             ConnectionAction::Close => {
                 // Return error to break loop
+                info!("Close connection {}", self.id);
                 return Err(anyhow::anyhow!("Closed"));
             }
             ConnectionAction::RegisterUDP(addr) => {
