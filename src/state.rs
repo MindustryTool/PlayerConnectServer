@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -186,6 +186,59 @@ impl Rooms {
                     }
                 }
             }
+        }
+    }
+
+    pub fn forward_to_host(&self, room_id: &str, action: ConnectionAction) {
+        let rooms = match self.rooms.read() {
+            Ok(rooms) => rooms,
+            Err(e) => {
+                error!("Failed to acquire rooms read lock: {}", e);
+                return;
+            }
+        };
+
+        let room = match rooms.get(room_id) {
+            Some(room) => room,
+            None => {
+                warn!("Room {} not found for forwarding", room_id);
+                return;
+            }
+        };
+
+        let sender = match room.members.get(&room.host_connection_id) {
+            Some(sender) => sender,
+            None => {
+                error!(
+                    "Host {} not found in room {}",
+                    room.host_connection_id, room_id
+                );
+                return;
+            }
+        };
+
+        if let Err(e) = sender.try_send(action) {
+            info!(
+                "Failed to forward to host {}: {}",
+                room.host_connection_id, e
+            );
+        }
+    }
+
+    pub fn get_room_members(&self, room_id: &str) -> Vec<(i32, mpsc::Sender<ConnectionAction>)> {
+        let rooms = match self.rooms.read() {
+            Ok(rooms) => rooms,
+            Err(e) => {
+                error!("Failed to acquire rooms read lock: {}", e);
+                return Vec::new();
+            }
+        };
+
+        if let Some(room) = rooms.get(room_id) {
+            room.members.iter().map(|(k, v)| (*k, v.clone())).collect()
+        } else {
+            warn!("Room {} not found for getting members", room_id);
+            Vec::new()
         }
     }
 }

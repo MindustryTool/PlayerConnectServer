@@ -1,7 +1,6 @@
-use crate::constant::{ArcCloseReason, MessageType};
+use crate::constant::{ArcCloseReason, CloseReason, MessageType};
 use crate::packets::{
-    AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionPacketWrapPacket, FrameworkMessage,
-    Message2Packet, MessagePacket, RoomLinkPacket,
+    AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionPacketWrapPacket, FrameworkMessage, Message2Packet, MessagePacket, RoomClosedPacket, RoomLinkPacket
 };
 use crate::rate::AtomicRateLimiter;
 use crate::state::{AppState, ConnectionAction, RoomInit, RoomUpdate};
@@ -243,7 +242,7 @@ impl ConnectionActor {
             let mut cursor = Cursor::new(&payload[..]);
 
             let packet = AnyPacket::read(&mut cursor)?;
-            
+
             info!("Received TCP packet: {:?}", packet);
             // Handle packet
             self.handle_packet(packet).await?;
@@ -299,11 +298,9 @@ impl ConnectionActor {
             AnyPacket::App(a) => self.handle_app(a).await?,
             AnyPacket::Raw(bytes) => {
                 if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
-                    self.state.rooms.broadcast(
-                        &room_id,
-                        ConnectionAction::SendTCPRaw(bytes),
-                        Some(self.id),
-                    );
+                    self.state
+                        .rooms
+                        .forward_to_host(&room_id, ConnectionAction::SendTCPRaw(bytes));
                 } else {
                     if self.packet_queue.len() < 16 {
                         self.packet_queue.push(AnyPacket::Raw(bytes));
@@ -443,13 +440,12 @@ impl ConnectionActor {
                     info!("Connection {} joined the room {}.", self.id, p.room_id);
 
                     for pkt in self.packet_queue.drain(..) {
-                        self.state.rooms.broadcast(
+                        self.state.rooms.forward_to_host(
                             &p.room_id,
                             match pkt {
                                 AnyPacket::Raw(b) => ConnectionAction::SendTCPRaw(b),
                                 _ => ConnectionAction::SendTCP(pkt),
                             },
-                            Some(self.id),
                         );
                     }
                 }
@@ -518,6 +514,18 @@ impl ConnectionActor {
                             self.id, room_id
                         );
                         return Ok(());
+                    }
+
+                    let members = self.state.rooms.get_room_members(&room_id);
+                    for (id, sender) in members {
+                        if id != self.id {
+                            let _ = sender.try_send(ConnectionAction::SendTCP(AnyPacket::App(
+                                AppPacket::RoomClosed(RoomClosedPacket {
+                                    reason: CloseReason::Closed,
+                                }),
+                            )));
+                            let _ = sender.try_send(ConnectionAction::Close);
+                        }
                     }
 
                     self.state.rooms.close(&room_id);
