@@ -620,7 +620,9 @@ impl ConnectionActor {
                         };
 
                         let Some(sender) = self.state.get_sender(connection_id) else {
-                            return Err(anyhow!("Connection not found: {}", connection_id));
+                            warn!("Connection not found: {}", connection_id);
+
+                            return Ok(());
                         };
 
                         if let Err(e) = sender.try_send(action) {
