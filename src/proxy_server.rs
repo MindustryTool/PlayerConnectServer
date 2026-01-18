@@ -72,6 +72,7 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
                                     }
                                 } else {
                                     // Unknown UDP sender, ignore
+                                    warn!("Unknown UDP sender: {}", addr);
                                 }
                             }
                         }
@@ -302,6 +303,11 @@ impl ConnectionActor {
                 } else {
                     if self.packet_queue.len() < 16 {
                         self.packet_queue.push(AnyPacket::Raw(bytes));
+                    } else {
+                        warn!(
+                            "Connection {} packet queue full, dropping raw packet",
+                            self.id
+                        );
                     }
                 }
             }
@@ -327,7 +333,9 @@ impl ConnectionActor {
                 // Should not happen via TCP?
                 // But if it does, ignore?
             }
-            _ => {}
+            _ => {
+                warn!("Unhandled Framework Packet: {:?}", packet);
+            }
         }
         Ok(())
     }
@@ -339,7 +347,7 @@ impl ConnectionActor {
                     if let Ok(mut rooms) = self.state.rooms.rooms.write() {
                         if let Some(room) = rooms.get_mut(&room_id) {
                             let sent_at = p.data.created_at;
-                            
+
                             room.stats = p.data;
                             room.updated_at = current_time_millis();
                             room.ping = current_time_millis() - sent_at;
@@ -584,7 +592,7 @@ impl ConnectionActor {
                 }
             }
             _ => {
-                info!("Unhandled {:?}", packet);
+                warn!("Unhandled App Packet: {:?}", packet);
             }
         }
         Ok(())
