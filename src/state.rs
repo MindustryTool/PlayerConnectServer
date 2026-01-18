@@ -1,4 +1,4 @@
-use crate::constant::ArcCloseReason;
+use crate::constant::{ArcCloseReason, CloseReason};
 use crate::packets::{AnyPacket, ConnectionClosedPacket, ConnectionJoinPacket};
 use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;

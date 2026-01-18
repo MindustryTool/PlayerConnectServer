@@ -7,6 +7,7 @@ pub enum CloseReason {
     ObsoleteClient = 1,
     OutdatedVersion = 2,
     ServerClosed = 3,
+    PackingSpamming = 4,
 }
 
 #[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, PartialEq)]
