@@ -64,13 +64,11 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
                                 // Normal packet, route it
                                 info!("Received UDP packet: {:?} from {:?}", packet, addr);
 
-                                if let Some((sender, limiter)) = state.get_route(&addr) {
-                                    if limiter.check() {
-                                        if let Err(e) =
-                                            sender.try_send(ConnectionAction::SendTCP(packet))
-                                        {
-                                            info!("Failed to forward UDP packet: {}", e);
-                                        }
+                                if let Some((sender, _)) = state.get_route(&addr) {
+                                    if let Err(e) = sender
+                                        .try_send(ConnectionAction::ProcessPacket(packet, false))
+                                    {
+                                        info!("Failed to forward UDP packet: {}", e);
                                     }
                                 } else {
                                     // Unknown UDP sender, ignore
@@ -244,12 +242,12 @@ impl ConnectionActor {
 
             let packet = AnyPacket::read(&mut cursor)?;
             // Handle packet
-            self.handle_packet(packet).await?;
+            self.handle_packet(packet, true).await?;
         }
         Ok(())
     }
 
-    async fn handle_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {
+    async fn handle_packet(&mut self, packet: AnyPacket, is_tcp: bool) -> anyhow::Result<()> {
         let is_framework = matches!(packet, AnyPacket::Framework(_));
 
         if !is_framework {
@@ -305,7 +303,7 @@ impl ConnectionActor {
                         ConnectionAction::SendTCP(AnyPacket::App(AppPacket::ConnectionPacketWrap(
                             ConnectionPacketWrapPacket {
                                 connection_id: self.id,
-                                is_tcp: false,
+                                is_tcp,
                                 buffer: bytes,
                             },
                         ))),
@@ -691,6 +689,9 @@ impl ConnectionActor {
                     connection_id: self.id,
                 }))
                 .await?;
+            }
+            ConnectionAction::ProcessPacket(packet, is_tcp) => {
+                self.handle_packet(packet, is_tcp).await?;
             }
         }
         Ok(())

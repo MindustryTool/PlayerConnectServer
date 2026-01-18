@@ -20,6 +20,7 @@ pub enum ConnectionAction {
     SendUDPRaw(Bytes),
     Close,
     RegisterUDP(SocketAddr),
+    ProcessPacket(AnyPacket, bool),
 }
 
 #[derive(Debug, Clone)]
