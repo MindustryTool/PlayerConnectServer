@@ -312,11 +312,13 @@ pub enum RoomUpdate {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RemoveRemoveEvent {
+    #[serde(rename = "roomId")]
     pub room_id: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RoomUpdateEvent {
+    #[serde(rename = "roomId")]
     pub room_id: String,
     pub data: RoomView,
 }
@@ -327,6 +329,7 @@ pub struct RoomView {
     pub status: String,
     #[serde(rename = "isPrivate")]
     pub is_private: bool,
+    #[serde(rename = "isSecured")]
     pub is_secured: bool,
     pub players: Vec<Player>,
     #[serde(rename = "mapName")]
