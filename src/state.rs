@@ -1,4 +1,5 @@
-use crate::packets::AnyPacket;
+use crate::constant::ArcCloseReason;
+use crate::packets::{AnyPacket, ConnectionClosedPacket, ConnectionJoinPacket};
 use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;
 use anyhow::anyhow;
@@ -101,14 +102,40 @@ impl Rooms {
 
         if let Some(room) = rooms.get_mut(room_id) {
             room.members.insert(connection_id, sender);
-            Ok(())
+
+            let sender = match room.members.get(&room.host_connection_id) {
+                Some(sender) => sender,
+                None => {
+                    error!(
+                        "Host {} not found in room {}",
+                        room.host_connection_id, room_id
+                    );
+                    return Ok(());
+                }
+            };
+            let packet = AnyPacket::App(crate::packets::AppPacket::ConnectionJoin(
+                ConnectionJoinPacket {
+                    connection_id,
+                    room_id: room_id.clone(),
+                },
+            ));
+
+            if let Err(e) = sender.try_send(ConnectionAction::SendTCP(packet)) {
+                info!(
+                    "Failed to forward to host {}: {}",
+                    room.host_connection_id, e
+                );
+            }
         } else {
-            Err(anyhow!("Room not found"))
+            return Err(anyhow!("Room not found"));
         }
+
+        Ok(())
     }
 
     pub fn leave(&self, connection_id: i32) -> Option<String> {
         let mut rooms = self.rooms.write().ok()?;
+
         let room_id = rooms
             .iter()
             .find(|(_, room)| room.members.contains_key(&connection_id))
@@ -116,6 +143,31 @@ impl Rooms {
 
         if let Some(room) = rooms.get_mut(&room_id) {
             room.members.remove(&connection_id);
+
+            let sender = match room.members.get(&room.host_connection_id) {
+                Some(sender) => sender,
+                None => {
+                    error!(
+                        "Host {} not found in room {}",
+                        room.host_connection_id, room_id
+                    );
+                    return None;
+                }
+            };
+
+            let packet = AnyPacket::App(crate::packets::AppPacket::ConnectionClosed(
+                ConnectionClosedPacket {
+                    connection_id,
+                    reason: ArcCloseReason::Closed,
+                },
+            ));
+
+            if let Err(e) = sender.try_send(ConnectionAction::SendTCP(packet)) {
+                info!(
+                    "Failed to forward to host {}: {}",
+                    room.host_connection_id, e
+                );
+            }
         }
 
         Some(room_id)
