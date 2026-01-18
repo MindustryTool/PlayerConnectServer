@@ -210,6 +210,9 @@ impl AppPacket {
 
         match pid {
             0 => {
+                let connection_id = buf.get_i32();
+                let is_tcp = buf.get_u8() != 0;
+
                 let remaining = buf.remaining();
                 let start = buf.position() as usize;
                 let end = start + remaining;
@@ -219,8 +222,8 @@ impl AppPacket {
 
                 Ok(AppPacket::ConnectionPacketWrap(
                     ConnectionPacketWrapPacket {
-                        connection_id: buf.get_i32(),
-                        is_tcp: buf.get_u8() != 0,
+                        connection_id,
+                        is_tcp,
                         buffer,
                     },
                 ))
@@ -293,11 +296,8 @@ impl AppPacket {
                 buf.put_u8(3);
                 buf.put_i32(p.connection_id);
             }
-            AppPacket::RoomCreationRequest(p) => {
-                buf.put_u8(4);
-                write_string(buf, &p.version);
-                write_string(buf, &p.password);
-                write_stats(buf, &p.data);
+            AppPacket::RoomCreationRequest(_) => {
+                panic!("Client only")
             }
             AppPacket::RoomClosureRequest(_) => {
                 buf.put_u8(5);
@@ -328,9 +328,7 @@ impl AppPacket {
                 write_string(buf, &p.message);
             }
             AppPacket::Stats(p) => {
-                buf.put_u8(12);
-                write_string(buf, &p.room_id);
-                write_stats(buf, &p.data);
+                panic!("Client only")
             }
         }
     }
@@ -378,19 +376,4 @@ pub fn read_stats(buf: &mut Cursor<&[u8]>) -> anyhow::Result<Stats> {
             Err(anyhow!(e))
         }
     }
-}
-
-pub fn write_stats(buf: &mut BytesMut, stats: &Stats) {
-    buf.put_u8(stats.players.len() as u8);
-    for p in &stats.players {
-        write_string(buf, &p.name);
-        write_string(buf, &p.locale);
-    }
-    write_string(buf, &stats.map_name);
-    write_string(buf, &stats.name);
-    write_string(buf, &stats.gamemode);
-    // write_string(buf, &stats.mods); // TODO
-    write_string(buf, &stats.locale);
-    write_string(buf, &stats.version);
-    buf.put_u128(stats.created_at);
 }
