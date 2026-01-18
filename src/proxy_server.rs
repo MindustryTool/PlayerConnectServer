@@ -24,6 +24,7 @@ const UDP_BUFFER_SIZE: usize = 4096;
 const TCP_BUFFER_SIZE: usize = 32768;
 const CHANNEL_CAPACITY: usize = 100;
 const CONNECTION_TIME_OUT_MS: u64 = 30000;
+const IDLE_TIMEOUT_MS: u64 = 5000;
 const KEEP_ALIVE_INTERVAL_MS: u64 = 2000;
 const PACKET_LENGTH_LENGTH: usize = 2;
 const TICK_INTERVAL_SECS: u64 = 1;
@@ -110,7 +111,9 @@ async fn accept_tcp_connection(
         let udp_socket = udp_socket.clone();
 
         tokio::spawn(async move {
-            let _ = socket.set_nodelay(true);
+            if let Err(e) = socket.set_nodelay(true) {
+                warn!("Failed to set nodelay for connection: {}", e);
+            }
             let id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
 
             let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -181,6 +184,7 @@ impl ConnectionActor {
                         Ok(0) => break, // EOF
                         Ok(n) => {
                             self.last_read = Instant::now();
+                            self.state.reset_idle(self.id);
 
                             buf.extend_from_slice(&tmp_buf[..n]);
                             self.process_tcp_buffer(&mut buf).await?;
@@ -212,6 +216,10 @@ impl ConnectionActor {
                     if self.last_read.elapsed() > Duration::from_millis(CONNECTION_TIME_OUT_MS) {
                         info!("Connection {} timed out", self.id);
                         break;
+                    }
+
+                    if self.last_read.elapsed() > Duration::from_millis(IDLE_TIMEOUT_MS) {
+                        self.state.idle(self.id);
                     }
 
                     if self.tcp_writer.last_write.elapsed() > Duration::from_millis(KEEP_ALIVE_INTERVAL_MS) {
@@ -542,12 +550,16 @@ impl ConnectionActor {
                     let members = self.state.rooms.get_room_members(&room_id);
                     for (id, sender) in members {
                         if id != self.id {
-                            let _ = sender.try_send(ConnectionAction::SendTCP(AnyPacket::App(
-                                AppPacket::RoomClosed(RoomClosedPacket {
+                            if let Err(e) = sender.try_send(ConnectionAction::SendTCP(
+                                AnyPacket::App(AppPacket::RoomClosed(RoomClosedPacket {
                                     reason: CloseReason::Closed,
-                                }),
-                            )));
-                            let _ = sender.try_send(ConnectionAction::Close);
+                                })),
+                            )) {
+                                info!("Failed to send room closed packet to {}: {}", id, e);
+                            }
+                            if let Err(e) = sender.try_send(ConnectionAction::Close) {
+                                info!("Failed to send close action to {}: {}", id, e);
+                            }
                         }
                     }
 
@@ -623,6 +635,8 @@ impl ConnectionActor {
                         if !is_owner {
                             return Err(anyhow!("Not room owner"));
                         }
+
+                        self.state.reset_idle(connection_id);
 
                         let action = if is_tcp {
                             ConnectionAction::SendTCPRaw(buffer)
@@ -704,6 +718,7 @@ impl ConnectionActor {
                 .await?;
             }
             ConnectionAction::ProcessPacket(packet, is_tcp) => {
+                self.state.reset_idle(self.id);
                 self.handle_packet(packet, is_tcp).await?;
             }
         }

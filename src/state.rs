@@ -5,7 +5,7 @@ use crate::utils::current_time_millis;
 use anyhow::anyhow;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 use tokio::sync::mpsc;
@@ -296,6 +296,38 @@ impl Rooms {
             Vec::new()
         }
     }
+
+    pub fn idle(&self, room_id: &str, connection_id: i32) {
+        let rooms = match self.rooms.read() {
+            Ok(rooms) => rooms,
+            Err(_) => return,
+        };
+
+        if let Some(room) = rooms.get(room_id) {
+            // Don't process host idle
+            if room.host_connection_id == connection_id {
+                return;
+            }
+
+            // Check if client is in room
+            if !room.members.contains_key(&connection_id) {
+                return;
+            }
+
+            // Send to host
+            if let Some(sender) = room.members.get(&room.host_connection_id) {
+                let packet = AnyPacket::App(crate::packets::AppPacket::ConnectionIdling(
+                    crate::packets::ConnectionIdlingPacket { connection_id },
+                ));
+                if let Err(e) = sender.try_send(ConnectionAction::SendTCP(packet)) {
+                    info!(
+                        "Failed to forward idle packet to host {}: {}",
+                        room.host_connection_id, e
+                    );
+                }
+            }
+        }
+    }
 }
 
 pub struct AppState {
@@ -303,6 +335,7 @@ pub struct AppState {
     pub connections: RwLock<HashMap<i32, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
     pub udp_routes:
         RwLock<HashMap<SocketAddr, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
+    pub notified_idle: RwLock<HashSet<i32>>,
 }
 
 impl AppState {
@@ -316,6 +349,7 @@ impl AppState {
             },
             connections: RwLock::new(HashMap::new()),
             udp_routes: RwLock::new(HashMap::new()),
+            notified_idle: RwLock::new(HashSet::new()),
         }
     }
 
@@ -367,10 +401,45 @@ impl AppState {
         self.udp_routes.read().ok()?.get(addr).cloned()
     }
 
+    pub fn idle(&self, connection_id: i32) {
+        // Only process valid connections
+        if let Ok(conns) = self.connections.read() {
+            if !conns.contains_key(&connection_id) {
+                return;
+            }
+        } else {
+            return;
+        }
+
+        // Check and set notified_idle
+        let should_notify = if let Ok(mut idle_set) = self.notified_idle.write() {
+            idle_set.insert(connection_id)
+        } else {
+            false
+        };
+
+        if !should_notify {
+            return;
+        }
+
+        // Find room and notify host
+        if let Some(room_id) = self.rooms.find_connection_room_id(connection_id) {
+            self.rooms.idle(&room_id, connection_id);
+        }
+    }
+
+    pub fn reset_idle(&self, connection_id: i32) {
+        if let Ok(mut idle_set) = self.notified_idle.write() {
+            idle_set.remove(&connection_id);
+        }
+    }
+
     pub fn remove_connection(&self, connection_id: i32) {
         if let Ok(mut conns) = self.connections.write() {
             conns.remove(&connection_id);
         }
+
+        self.reset_idle(connection_id);
 
         // Handle room logic
         let room_id_opt = self.rooms.leave(connection_id);
@@ -404,7 +473,9 @@ impl AppState {
                 };
 
                 for sender in members {
-                    let _ = sender.try_send(ConnectionAction::Close);
+                    if let Err(e) = sender.try_send(ConnectionAction::Close) {
+                        info!("Failed to send close action to member: {}", e);
+                    }
                 }
 
                 self.rooms.close(&room_id);

@@ -1,2 +1,3 @@
 - All branch have to be handled or logged
 - Early return if possible, make use of let Some/Ok,Err to handle early return
+- Do not ignore Result, log or handle it
