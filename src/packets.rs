@@ -167,7 +167,7 @@ impl FrameworkMessage {
         match fid {
             0 => Ok(FrameworkMessage::Ping {
                 id: buf.get_i32(),
-                is_reply: buf.get_u8() == 1,
+                is_reply: buf.get_u8() != 0,
             }),
             1 => Ok(FrameworkMessage::DiscoverHost),
             2 => Ok(FrameworkMessage::KeepAlive),
@@ -209,19 +209,22 @@ impl AppPacket {
         let pid = buf.get_u8();
 
         match pid {
-            0 => Ok(AppPacket::ConnectionPacketWrap(
-                ConnectionPacketWrapPacket {
-                    connection_id: buf.get_i32(),
-                    is_tcp: buf.get_u8() == 1,
-                    buffer: {
-                        let mut b = BytesMut::new();
-                        while buf.has_remaining() {
-                            b.put_u8(buf.get_u8());
-                        }
-                        b.freeze()
+            0 => {
+                let remaining = buf.remaining();
+                let start = buf.position() as usize;
+                let end = start + remaining;
+
+                let buffer = Bytes::copy_from_slice(&buf.get_ref()[start..end]);
+                buf.set_position(end as u64);
+
+                Ok(AppPacket::ConnectionPacketWrap(
+                    ConnectionPacketWrapPacket {
+                        connection_id: buf.get_i32(),
+                        is_tcp: buf.get_u8() != 0,
+                        buffer,
                     },
-                },
-            )),
+                ))
+            }
             1 => Ok(AppPacket::ConnectionClosed(ConnectionClosedPacket {
                 connection_id: buf.get_i32(),
                 reason: ArcCloseReason::from(buf.get_u8()), // DcReason ordinal
@@ -274,7 +277,7 @@ impl AppPacket {
                 buf.put_u8(0);
                 buf.put_i32(p.connection_id);
                 buf.put_u8(if p.is_tcp { 1 } else { 0 });
-                buf.put_slice(&p.buffer);
+                buf.extend_from_slice(&p.buffer);
             }
             AppPacket::ConnectionClosed(p) => {
                 buf.put_u8(1);
