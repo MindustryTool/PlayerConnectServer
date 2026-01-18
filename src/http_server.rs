@@ -19,8 +19,8 @@ use tracing::info;
 
 pub async fn run(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
     let app = Router::new()
-        .route("/api/v1/ping", get(ping))
-        .route("/api/v1/rooms", get(rooms_sse))
+        .route("/ping", get(ping))
+        .route("/rooms", get(rooms_sse))
         .route("/:roomId", get(room_page))
         .route("/:roomId", post(room_port))
         .with_state(state);
