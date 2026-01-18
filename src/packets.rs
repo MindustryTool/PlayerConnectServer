@@ -398,5 +398,5 @@ pub fn write_stats(buf: &mut BytesMut, stats: &Stats) {
     // write_string(buf, &stats.mods); // TODO
     write_string(buf, &stats.locale);
     write_string(buf, &stats.version);
-    buf.put_i64(stats.created_at);
+    buf.put_u128(stats.created_at);
 }

@@ -21,7 +21,7 @@ pub enum ConnectionAction {
     RegisterUDP(SocketAddr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Room {
     pub id: String,
     pub host_connection_id: i32,
@@ -30,6 +30,7 @@ pub struct Room {
     pub updated_at: u128,
     pub members: HashMap<i32, mpsc::Sender<ConnectionAction>>,
     pub stats: Stats,
+    pub ping: u128,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,7 +44,7 @@ pub struct Stats {
     pub locale: String,
     pub version: String,
     #[serde(rename = "createdAt")]
-    pub created_at: i64,
+    pub created_at: u128,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +148,7 @@ impl Rooms {
             members,
             created_at: current_time_millis(),
             updated_at: current_time_millis(),
+            ping: 0,
         };
 
         if let Ok(mut rooms) = self.rooms.write() {
@@ -304,7 +306,7 @@ impl AppState {
 
 #[derive(Clone, Debug)]
 pub enum RoomUpdate {
-    Update { id: String, data: Stats },
+    Update { id: String, data: Room },
     Remove(String),
 }
 
@@ -316,5 +318,43 @@ pub struct RemoveRemoveEvent {
 #[derive(Clone, Debug, Serialize)]
 pub struct RoomUpdateEvent {
     pub room_id: String,
-    pub data: Stats,
+    pub data: RoomView,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RoomView {
+    pub name: String,
+    pub status: String,
+    #[serde(rename = "isPrivate")]
+    pub is_private: bool,
+    pub is_secured: bool,
+    pub players: Vec<Player>,
+    #[serde(rename = "mapName")]
+    pub map_name: String,
+    pub gamemode: String,
+    pub mods: Vec<String>,
+    pub locale: String,
+    pub version: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: u128,
+    pub ping: u128,
+}
+
+impl RoomView {
+    pub fn from(room: &Room) -> Self {
+        Self {
+            name: room.stats.name.clone(),
+            status: "UP".to_string(),
+            is_private: false,
+            is_secured: room.password.is_some(),
+            players: room.stats.players.clone(),
+            map_name: room.stats.map_name.clone(),
+            gamemode: room.stats.gamemode.clone(),
+            mods: room.stats.mods.clone(),
+            locale: room.stats.locale.clone(),
+            version: room.stats.version.clone(),
+            created_at: room.stats.created_at,
+            ping: room.ping,
+        }
+    }
 }

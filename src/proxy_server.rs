@@ -338,12 +338,15 @@ impl ConnectionActor {
                 if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
                     if let Ok(mut rooms) = self.state.rooms.rooms.write() {
                         if let Some(room) = rooms.get_mut(&room_id) {
+                            let sent_at = p.data.created_at;
+                            
                             room.stats = p.data;
                             room.updated_at = current_time_millis();
+                            room.ping = current_time_millis() - sent_at;
 
                             if let Err(err) = self.state.rooms.tx.send(RoomUpdate::Update {
                                 id: room.id.clone(),
-                                data: room.stats.clone(),
+                                data: room.clone(),
                             }) {
                                 info!("Fail to broadcast room update {}", err);
                             }

@@ -1,4 +1,4 @@
-use crate::state::{AppState, RemoveRemoveEvent, RoomUpdate, RoomUpdateEvent};
+use crate::state::{AppState, RemoveRemoveEvent, RoomUpdate, RoomUpdateEvent, RoomView};
 use axum::{
     extract::{Path, State},
     http::header,
@@ -47,7 +47,7 @@ async fn rooms_sse(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 .iter()
                 .map(|(key, room)| RoomUpdateEvent {
                     room_id: key.clone(),
-                    data: room.stats.clone(),
+                    data: RoomView::from(room),
                 })
                 .collect()
         } else {
@@ -69,7 +69,7 @@ async fn rooms_sse(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                     .event("update")
                     .json_data(RoomUpdateEvent {
                         room_id: id.clone(),
-                        data: data.clone(),
+                        data: RoomView::from(&data),
                     })
                     .map_err(axum::BoxError::from),
                 RoomUpdate::Remove(id) => Event::default()
