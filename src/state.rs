@@ -15,7 +15,6 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub enum ConnectionAction {
     SendTCP(AnyPacket),
-    SendUDP(AnyPacket),
     SendTCPRaw(BytesMut),
     SendUDPRaw(BytesMut),
     Close,
