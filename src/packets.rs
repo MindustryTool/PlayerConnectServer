@@ -207,17 +207,13 @@ impl AppPacket {
 
         match pid {
             0 => {
-                let start_pos = buf.position();
                 let connection_id = buf.get_i32();
                 let is_tcp = buf.get_u8() != 0;
 
-                buf.set_position(start_pos);
-
-                let remaining = buf.remaining();
                 let start = buf.position() as usize;
-                let end = start + remaining;
-
+                let end = start + buf.remaining();
                 let buffer = buf.get_ref().slice(start..end);
+
                 buf.set_position(end as u64);
 
                 Ok(AppPacket::ConnectionPacketWrap(

@@ -320,7 +320,7 @@ impl ConnectionActor {
                     let packet = AnyPacket::App(AppPacket::ConnectionPacketWrap(
                         ConnectionPacketWrapPacket {
                             connection_id: self.id,
-                            is_tcp: false,
+                            is_tcp,
                             buffer: bytes,
                         },
                     ));
