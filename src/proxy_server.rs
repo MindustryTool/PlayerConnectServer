@@ -674,11 +674,11 @@ impl ConnectionActor {
             ConnectionAction::SendTCP(p) => {
                 let bytes = p.to_bytes();
                 info!("Send packet: {:?} to {}", p, self.id);
-                self.tcp_writer.write(&ConnectionActor::prepend_len(bytes)).await?;
+                batch.extend_from_slice(&ConnectionActor::prepend_len(bytes));
             }
             ConnectionAction::SendTCPRaw(b) => {
                 info!("Send tcp {} bytes to {}", b.len(), self.id);
-                self.tcp_writer.write(&ConnectionActor::prepend_len(b)).await?;
+                batch.extend_from_slice(&ConnectionActor::prepend_len(b));
             }
             ConnectionAction::SendUDPRaw(b) => {
                 info!("Send udp {} bytes to {}", b.len(), self.id);
