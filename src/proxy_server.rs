@@ -317,16 +317,17 @@ impl ConnectionActor {
             AnyPacket::App(a) => self.handle_app(a).await?,
             AnyPacket::Raw(bytes) => {
                 if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
-                    self.state.rooms.forward_to_host(
-                        &room_id,
-                        ConnectionAction::SendTCP(AnyPacket::App(AppPacket::ConnectionPacketWrap(
-                            ConnectionPacketWrapPacket {
-                                connection_id: self.id,
-                                is_tcp,
-                                buffer: bytes,
-                            },
-                        ))),
-                    );
+                    let packet = AnyPacket::App(AppPacket::ConnectionPacketWrap(
+                        ConnectionPacketWrapPacket {
+                            connection_id: self.id,
+                            is_tcp: true,
+                            buffer: bytes,
+                        },
+                    ));
+
+                    self.state
+                        .rooms
+                        .forward_to_host(&room_id, ConnectionAction::SendTCP(packet));
                 } else {
                     if self.packet_queue.len() < 16 {
                         self.packet_queue.push(bytes);
@@ -638,6 +639,16 @@ impl ConnectionActor {
 
                         let Some(sender) = self.state.get_sender(connection_id) else {
                             warn!("Connection not found: {}", connection_id);
+
+                            self.state.rooms.forward_to_host(
+                                &room_id,
+                                ConnectionAction::SendTCP(AnyPacket::App(
+                                    AppPacket::ConnectionClosed(ConnectionClosedPacket {
+                                        connection_id,
+                                        reason: ArcCloseReason::Closed,
+                                    }),
+                                )),
+                            );
 
                             return Ok(());
                         };

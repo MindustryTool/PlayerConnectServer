@@ -148,8 +148,8 @@ impl AnyPacket {
             AnyPacket::App(package) => {
                 package.write(&mut payload);
             }
-            AnyPacket::Raw(data) => {
-                payload.put_slice(data);
+            AnyPacket::Raw(raw) => {
+                payload.extend_from_slice(raw);
             }
         }
 
