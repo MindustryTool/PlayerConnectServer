@@ -1,9 +1,9 @@
-use crate::constant::{ArcCloseReason, CloseReason};
+use crate::constant::ArcCloseReason;
 use crate::packets::{AnyPacket, ConnectionClosedPacket, ConnectionJoinPacket};
 use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;
 use anyhow::anyhow;
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;

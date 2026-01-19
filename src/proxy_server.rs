@@ -722,11 +722,12 @@ impl ConnectionActor {
     }
 
     pub fn prepend_len(payload: BytesMut) -> BytesMut {
-        let mut header = BytesMut::with_capacity(2 + payload.len());
-        header.put_u16(payload.len() as u16);
+        let mut out: BytesMut = BytesMut::with_capacity(2 + payload.len());
 
-        header.extend_from_slice(&payload);
-        header
+        out.put_u16(payload.len() as u16);
+        out.extend_from_slice(&payload);
+        
+        out
     }
 
     async fn write_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {

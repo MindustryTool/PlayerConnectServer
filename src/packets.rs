@@ -110,7 +110,6 @@ pub struct Message2Packet {
 
 #[derive(Debug, Clone)]
 pub struct StatsPacket {
-    pub room_id: String,
     pub data: Stats,
 }
 
@@ -266,7 +265,6 @@ impl AppPacket {
                 message: read_string(buf)?,
             })),
             12 => Ok(AppPacket::Stats(StatsPacket {
-                room_id: read_string(buf)?,
                 data: read_stats(buf)?,
             })),
             _ => Err(anyhow!("Unknown App Packet ID: {}", pid)),
@@ -328,7 +326,7 @@ impl AppPacket {
                 buf.put_u8(11);
                 write_string(buf, &p.message);
             }
-            AppPacket::Stats(p) => {
+            AppPacket::Stats(_) => {
                 panic!("Client only")
             }
         }
