@@ -159,7 +159,7 @@ struct ConnectionActor {
     udp_writer: UdpWriter,
     limiter: Arc<AtomicRateLimiter>,
     last_read: Instant,
-    packet_queue: Vec<Bytes>,
+    packet_queue: Vec<BytesMut>,
 }
 
 impl ConnectionActor {
@@ -682,11 +682,11 @@ impl ConnectionActor {
             }
             ConnectionAction::SendTCPRaw(b) => {
                 info!("Send tcp {} bytes to {}", b.len(), self.id);
-                batch.extend_from_slice(&b);
+                batch.extend_from_slice(&AnyPacket::prepend_len(b));
             }
             ConnectionAction::SendUDPRaw(b) => {
                 info!("Send udp {} bytes to {}", b.len(), self.id);
-                self.udp_writer.send_raw(&b).await?;
+                self.udp_writer.send_raw(&AnyPacket::prepend_len(b)).await?;
             }
             ConnectionAction::Close => {
                 // Return error to break loop

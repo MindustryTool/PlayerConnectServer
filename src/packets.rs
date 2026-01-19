@@ -14,7 +14,7 @@ pub const FRAMEWORK_PACKET_ID: i8 = -2;
 pub enum AnyPacket {
     Framework(FrameworkMessage),
     App(AppPacket),
-    Raw(Bytes),
+    Raw(BytesMut),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -47,7 +47,7 @@ pub enum AppPacket {
 pub struct ConnectionPacketWrapPacket {
     pub connection_id: i32,
     pub is_tcp: bool,
-    pub buffer: Bytes,
+    pub buffer: BytesMut,
 }
 
 #[derive(Debug, Clone)]
@@ -134,12 +134,12 @@ impl AnyPacket {
                 let bytes = buf.get_ref().slice(start..end);
                 buf.advance(remaining);
 
-                Ok(AnyPacket::Raw(bytes))
+                Ok(AnyPacket::Raw(BytesMut::from(bytes)))
             }
         }
     }
 
-    pub fn to_bytes(&self) -> Bytes {
+    pub fn to_bytes(&self) -> BytesMut {
         let mut payload = BytesMut::new();
 
         match self {
@@ -154,12 +154,15 @@ impl AnyPacket {
             }
         }
 
-        let mut out: BytesMut = BytesMut::new();
+        AnyPacket::prepend_len(payload)
+    }
 
-        out.put_u16(payload.len() as u16);
-        out.extend_from_slice(&payload);
+    pub fn prepend_len(payload: BytesMut) -> BytesMut {
+        let mut header = BytesMut::with_capacity(2);
+        header.put_u16(payload.len() as u16);
 
-        out.freeze()
+        header.unsplit(payload);
+        header
     }
 }
 
@@ -230,7 +233,7 @@ impl AppPacket {
                     ConnectionPacketWrapPacket {
                         connection_id,
                         is_tcp,
-                        buffer,
+                        buffer: BytesMut::from(buffer),
                     },
                 ))
             }

@@ -3,7 +3,7 @@ use crate::packets::{AnyPacket, ConnectionClosedPacket, ConnectionJoinPacket};
 use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;
 use anyhow::anyhow;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -16,8 +16,8 @@ use uuid::Uuid;
 pub enum ConnectionAction {
     SendTCP(AnyPacket),
     SendUDP(AnyPacket),
-    SendTCPRaw(Bytes),
-    SendUDPRaw(Bytes),
+    SendTCPRaw(BytesMut),
+    SendUDPRaw(BytesMut),
     Close,
     RegisterUDP(SocketAddr),
     ProcessPacket(AnyPacket, bool),
