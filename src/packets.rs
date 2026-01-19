@@ -115,7 +115,7 @@ pub struct StatsPacket {
 }
 
 impl AnyPacket {
-    pub fn read(buf: &mut Cursor<&[u8]>) -> anyhow::Result<Self> {
+    pub fn read(buf: &mut Cursor<Bytes>) -> anyhow::Result<Self> {
         if !buf.has_remaining() {
             return Err(anyhow!("Empty packet"));
         }
@@ -128,10 +128,13 @@ impl AnyPacket {
             _ => {
                 buf.set_position(buf.position() - 1);
                 let remaining = buf.remaining();
-                let mut bytes = BytesMut::with_capacity(remaining);
-                bytes.put(buf);
+                let start = buf.position() as usize;
+                let end = start + remaining;
 
-                Ok(AnyPacket::Raw(bytes.freeze()))
+                let bytes = buf.get_ref().slice(start..end);
+                buf.advance(remaining);
+
+                Ok(AnyPacket::Raw(bytes))
             }
         }
     }
@@ -161,7 +164,7 @@ impl AnyPacket {
 }
 
 impl FrameworkMessage {
-    pub fn read(buf: &mut Cursor<&[u8]>) -> anyhow::Result<Self> {
+    pub fn read(buf: &mut Cursor<Bytes>) -> anyhow::Result<Self> {
         let fid = buf.get_u8();
 
         match fid {
@@ -205,19 +208,22 @@ impl FrameworkMessage {
 }
 
 impl AppPacket {
-    pub fn read(buf: &mut Cursor<&[u8]>) -> anyhow::Result<Self> {
+    pub fn read(buf: &mut Cursor<Bytes>) -> anyhow::Result<Self> {
         let pid = buf.get_u8();
 
         match pid {
             0 => {
+                let start_pos = buf.position();
                 let connection_id = buf.get_i32();
                 let is_tcp = buf.get_u8() != 0;
+
+                buf.set_position(start_pos);
 
                 let remaining = buf.remaining();
                 let start = buf.position() as usize;
                 let end = start + remaining;
 
-                let buffer = Bytes::copy_from_slice(&buf.get_ref()[start..end]);
+                let buffer = buf.get_ref().slice(start..end);
                 buf.set_position(end as u64);
 
                 Ok(AppPacket::ConnectionPacketWrap(
@@ -335,7 +341,7 @@ impl AppPacket {
 }
 
 // Helper to read/write strings
-pub fn read_string(buf: &mut Cursor<&[u8]>) -> anyhow::Result<String> {
+pub fn read_string(buf: &mut Cursor<Bytes>) -> anyhow::Result<String> {
     if buf.remaining() < 2 {
         return Err(anyhow!(
             "Not enough bytes for string length: {}",
@@ -366,7 +372,7 @@ pub fn write_string(buf: &mut BytesMut, s: &str) {
     buf.put_slice(bytes);
 }
 
-pub fn read_stats(buf: &mut Cursor<&[u8]>) -> anyhow::Result<Stats> {
+pub fn read_stats(buf: &mut Cursor<Bytes>) -> anyhow::Result<Stats> {
     let json = read_string(buf)?;
 
     match serde_json::from_str::<Stats>(&json) {

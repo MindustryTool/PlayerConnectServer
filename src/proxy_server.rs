@@ -51,7 +51,7 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
             match socket.recv_from(&mut buf).await {
                 Ok((len, addr)) => {
                     let data = &buf[..len];
-                    let mut cursor = Cursor::new(data);
+                    let mut cursor = Cursor::new(Bytes::copy_from_slice(data));
 
                     match AnyPacket::read(&mut cursor) {
                         Ok(packet) => {
@@ -249,8 +249,8 @@ impl ConnectionActor {
 
             buf.advance(PACKET_LENGTH_LENGTH);
 
-            let payload = buf.split_to(len);
-            let mut cursor = Cursor::new(&payload[..]);
+            let payload = buf.split_to(len).freeze();
+            let mut cursor = Cursor::new(payload);
 
             match AnyPacket::read(&mut cursor) {
                 Ok(packet) => {
