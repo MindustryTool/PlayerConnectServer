@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 
 public class NetworkRelay extends Server implements NetListener {
     protected boolean isClosed;
-    
+
     /**
      * Keeps a cache of packets received from connections that are not yet in a
      * room. (queue of 3 packets)<br>
@@ -385,8 +385,8 @@ public class NetworkRelay extends Server implements NetListener {
             if (id == Packets.id) {
                 Packets.Packet packet = Packets.newPacket(buffer.get());
                 packet.read(new ByteBufferInput(buffer));
-                if (packet instanceof Packets.ConnectionPacketWrapPacket) // This one is special
-                    ((Packets.ConnectionPacketWrapPacket) packet).buffer = (ByteBuffer) ((ByteBuffer) last.get()
+                if (packet instanceof Packets.ConnectionPacketWrapPacket wrap) // This one is special
+                    wrap.buffer = (ByteBuffer) ((ByteBuffer) last.get()
                             .clear()).put(buffer).flip();
                 return packet;
             }
@@ -408,8 +408,8 @@ public class NetworkRelay extends Server implements NetListener {
                 Packets.Packet packet = (Packets.Packet) object;
                 buffer.put(Packets.id).put(Packets.getId(packet));
                 packet.write(new ByteBufferOutput(buffer));
-                if (packet instanceof Packets.ConnectionPacketWrapPacket) // This one is special
-                    buffer.put(((Packets.ConnectionPacketWrapPacket) packet).buffer);
+                if (packet instanceof Packets.ConnectionPacketWrapPacket wrapPacket) // This one is special
+                    buffer.put(wrapPacket.buffer);
             }
         }
 
@@ -448,7 +448,7 @@ public class NetworkRelay extends Server implements NetListener {
                 p.connectionID = buffer.getInt();
                 return p;
             } else {
-                throw new RuntimeException("Unknown framework message!");
+                throw new RuntimeException("Unknown framework message: " + id);
             }
         }
     }

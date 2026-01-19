@@ -97,15 +97,15 @@ public class ServerRoom implements NetListener {
         if (connection == host) {
             // Only claj packets are allowed in the host's connection
             // and can only be ConnectionPacketWrapPacket at this point.
-            if (!(object instanceof Packets.ConnectionPacketWrapPacket))
+            if (!(object instanceof Packets.ConnectionPacketWrapPacket wrap))
                 return;
 
-            int connectionId = ((Packets.ConnectionPacketWrapPacket) object).connectionId;
+            int connectionId = wrap.connectionId;
             Connection con = clients.get(connectionId);
 
             if (con != null && con.isConnected()) {
-                boolean tcp = ((Packets.ConnectionPacketWrapPacket) object).isTCP;
-                Object o = ((Packets.ConnectionPacketWrapPacket) object).buffer;
+                boolean tcp = wrap.isTCP;
+                Object o = wrap.buffer;
 
                 if (tcp)
                     con.sendTCP(o);
@@ -125,14 +125,13 @@ public class ServerRoom implements NetListener {
             // We never send claj packets to anyone other than the room host, framework
             // packets are ignored
             // and mindustry packets are saved as raw buffer.
-            if (!(object instanceof ByteBuffer))
+            if (!(object instanceof ByteBuffer buffer))
                 return;
 
             Packets.ConnectionPacketWrapPacket p = new Packets.ConnectionPacketWrapPacket();
             p.connectionId = connection.getID();
-            p.buffer = (ByteBuffer) object;
+            p.buffer = buffer;
             host.sendTCP(p);
-
         }
     }
 

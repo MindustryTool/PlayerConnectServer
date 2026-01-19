@@ -12,8 +12,6 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
 import arc.Events;
-import arc.net.DcReason;
-import arc.struct.Seq;
 import arc.util.Log;
 import io.javalin.Javalin;
 import io.javalin.json.JavalinJackson;
@@ -89,55 +87,6 @@ public class HttpServer {
         });
 
         app.get("ping", ctx -> ctx.result("pong"));
-
-        app.get("connections", ctx -> {
-            if (!auth(ctx)) {
-                return;
-            }
-
-            var result = Seq.with(PlayerConnect.relay.getConnections())
-                    .map(connection -> {
-
-                        ConnectionDto dto = new ConnectionDto();
-                        dto.id = Utils.toString(connection);
-                        dto.ip = Utils.getIP(connection);
-
-                        return dto;
-                    }).list();
-
-            ctx.json(result);
-        });
-
-        app.post("ban", ctx -> {
-            if (!auth(ctx)) {
-                return;
-            }
-
-            var ip = ctx.body();
-
-            for (var connection : PlayerConnect.relay.getConnections()) {
-                if (Utils.getIP(connection).equals(ip)) {
-                    connection.close(DcReason.closed);
-                    Log.info("Kicked client <" + Utils.toString(connection) + "> for IP ban");
-                    Events.fire(new PlayerConnectEvents.ClientKickedEvent(connection));
-                }
-            }
-
-            Configs.IP_BLACK_LIST.add(ip);
-
-            ctx.json(Configs.IP_BLACK_LIST.list());
-        });
-
-        app.post("unban", ctx -> {
-            if (!auth(ctx)) {
-                return;
-            }
-
-            var ip = ctx.body();
-            Configs.IP_BLACK_LIST.remove(ip);
-
-            ctx.json(Configs.IP_BLACK_LIST.list());
-        });
 
         app.start(Integer.parseInt(System.getenv("PLAYER_CONNECT_HTTP_PORT")));
 
