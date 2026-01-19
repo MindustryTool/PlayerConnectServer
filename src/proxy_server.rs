@@ -678,7 +678,7 @@ impl ConnectionActor {
             }
             ConnectionAction::SendTCPRaw(b) => {
                 info!("Send tcp {} bytes to {}", b.len(), self.id);
-                batch.extend_from_slice(&b);
+                batch.extend_from_slice(&ConnectionActor::prepend_len(b));
             }
             ConnectionAction::SendUDPRaw(b) => {
                 info!("Send udp {} bytes to {}", b.len(), self.id);
@@ -726,12 +726,14 @@ impl ConnectionActor {
 
         out.put_u16(payload.len() as u16);
         out.extend_from_slice(&payload);
-        
+
         out
     }
 
     async fn write_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {
-        self.tcp_writer.write_packet(packet).await
+        self.tcp_writer
+            .write(&ConnectionActor::prepend_len(packet.to_bytes()))
+            .await
     }
 }
 
@@ -752,11 +754,6 @@ impl TcpWriter {
         self.writer.write_all(data).await?;
         self.last_write = Instant::now();
         Ok(())
-    }
-
-    async fn write_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {
-        let bytes = packet.to_bytes();
-        self.write(&bytes).await
     }
 }
 
