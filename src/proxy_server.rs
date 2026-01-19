@@ -636,18 +636,18 @@ impl ConnectionActor {
                             return Err(anyhow!("Not room owner"));
                         }
 
+                        let Some(sender) = self.state.get_sender(connection_id) else {
+                            warn!("Connection not found: {}", connection_id);
+
+                            return Ok(());
+                        };
+
                         self.state.reset_idle(connection_id);
 
                         let action = if is_tcp {
                             ConnectionAction::SendTCPRaw(buffer)
                         } else {
                             ConnectionAction::SendUDPRaw(buffer)
-                        };
-
-                        let Some(sender) = self.state.get_sender(connection_id) else {
-                            warn!("Connection not found: {}", connection_id);
-
-                            return Ok(());
                         };
 
                         if let Err(e) = sender.try_send(action) {
@@ -678,7 +678,7 @@ impl ConnectionActor {
             }
             ConnectionAction::SendTCPRaw(b) => {
                 info!("Send tcp {} bytes to {}", b.len(), self.id);
-                batch.extend_from_slice(&AnyPacket::prepend_len(b));
+                batch.extend_from_slice(&b);
             }
             ConnectionAction::SendUDPRaw(b) => {
                 info!("Send udp {} bytes to {}", b.len(), self.id);
