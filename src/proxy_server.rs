@@ -678,7 +678,7 @@ impl ConnectionActor {
             }
             ConnectionAction::SendTCPRaw(b) => {
                 info!("Send tcp {} bytes to {}", b.len(), self.id);
-                batch.extend_from_slice(&ConnectionActor::prepend_len(b));
+                batch.extend_from_slice(&b);
             }
             ConnectionAction::SendUDPRaw(b) => {
                 info!("Send udp {} bytes to {}", b.len(), self.id);
