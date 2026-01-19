@@ -154,15 +154,7 @@ impl AnyPacket {
             }
         }
 
-        AnyPacket::prepend_len(payload)
-    }
-
-    pub fn prepend_len(payload: BytesMut) -> BytesMut {
-        let mut header = BytesMut::with_capacity(2 + payload.len());
-        header.put_u16(payload.len() as u16);
-
-        header.extend_from_slice(&payload);
-        header
+        payload
     }
 }
 

@@ -7,7 +7,7 @@ use crate::rate::AtomicRateLimiter;
 use crate::state::{AppState, ConnectionAction, RoomInit, RoomUpdate};
 use crate::utils::current_time_millis;
 use anyhow::anyhow;
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io::Cursor;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -674,11 +674,11 @@ impl ConnectionActor {
             ConnectionAction::SendTCP(p) => {
                 let bytes = p.to_bytes();
                 info!("Send packet: {:?} to {}", p, self.id);
-                batch.extend_from_slice(&bytes);
+                batch.extend_from_slice(&ConnectionActor::prepend_len(bytes));
             }
             ConnectionAction::SendTCPRaw(b) => {
                 info!("Send tcp {} bytes to {}", b.len(), self.id);
-                batch.extend_from_slice(&b);
+                batch.extend_from_slice(&ConnectionActor::prepend_len(b));
             }
             ConnectionAction::SendUDPRaw(b) => {
                 info!("Send udp {} bytes to {}", b.len(), self.id);
@@ -719,6 +719,14 @@ impl ConnectionActor {
             }
         }
         Ok(())
+    }
+
+    pub fn prepend_len(payload: BytesMut) -> BytesMut {
+        let mut header = BytesMut::with_capacity(2 + payload.len());
+        header.put_u16(payload.len() as u16);
+
+        header.extend_from_slice(&payload);
+        header
     }
 
     async fn write_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {
@@ -763,10 +771,6 @@ impl UdpWriter {
 
     fn set_addr(&mut self, addr: SocketAddr) {
         self.addr = Some(addr);
-    }
-
-    async fn send(&self, packet: AnyPacket) -> anyhow::Result<()> {
-        return self.send_raw(&packet.to_bytes()).await;
     }
 
     async fn send_raw(&self, bytes: &[u8]) -> anyhow::Result<()> {
