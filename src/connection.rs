@@ -142,8 +142,6 @@ impl ConnectionActor {
         let is_framework = matches!(packet, AnyPacket::Framework(_));
 
         if !is_framework {
-            info!("Received TCP packet: {:?} from {}", packet, self.id);
-
             let room_id_opt = self.state.rooms.find_connection_room_id(self.id);
             let is_host = if let Some(ref room_id) = room_id_opt {
                 if let Some(rooms) = self.state.rooms.read() {
@@ -203,7 +201,6 @@ impl ConnectionActor {
                 } else {
                     if self.packet_queue.len() < 16 {
                         self.packet_queue.push(bytes);
-                        info!("Queued raw packet for connection {}", self.id);
                     } else {
                         warn!(
                             "Connection {} packet queue full, dropping raw packet",
@@ -259,7 +256,7 @@ impl ConnectionActor {
                                     data: room.clone(),
                                 })
                             {
-                                info!("Fail to broadcast room update {}", err);
+                                warn!("Fail to broadcast room update {}", err);
                             }
                         }
                     }
@@ -311,7 +308,7 @@ impl ConnectionActor {
                 .unwrap_or((false, false));
 
                 if wrong_password {
-                    info!(
+                    warn!(
                         "Connection {} tried to join room {} with wrong password.",
                         self.id, p.room_id
                     );
@@ -323,7 +320,7 @@ impl ConnectionActor {
                 }
 
                 if !can_join {
-                    info!(
+                    warn!(
                         "Connection {} tried to join a non-existent room {}.",
                         self.id, p.room_id
                     );
@@ -396,7 +393,7 @@ impl ConnectionActor {
                         info!("Fail to broadcast room update {}", err);
                     }
 
-                    info!("Room {} created by connection {}.", room_id, self.id);
+                    warn!("Room {} created by connection {}.", room_id, self.id);
                 }
             }
             AppPacket::RoomClosureRequest(_) => {
@@ -430,10 +427,10 @@ impl ConnectionActor {
                                     reason: CloseReason::Closed,
                                 })),
                             )) {
-                                info!("Failed to send room closed packet to {}: {}", id, e);
+                                warn!("Failed to send room closed packet to {}: {}", id, e);
                             }
                             if let Err(e) = sender.try_send(ConnectionAction::Close) {
-                                info!("Failed to send close action to {}: {}", id, e);
+                                warn!("Failed to send close action to {}: {}", id, e);
                             }
                         }
                     }
@@ -481,13 +478,13 @@ impl ConnectionActor {
                                     }),
                                 )))
                             {
-                                info!(
+                                warn!(
                                     "Failed to send connection closed packet to {}: {}",
                                     p.connection_id, e
                                 );
                             }
                             if let Err(e) = sender.try_send(ConnectionAction::Close) {
-                                info!("Failed to send close action to {}: {}", p.connection_id, e);
+                                warn!("Failed to send close action to {}: {}", p.connection_id, e);
                             }
                         } else {
                             warn!("Connection {} (room {}) tried to close a connection from another room.", self.id, room_id);
@@ -540,7 +537,7 @@ impl ConnectionActor {
                         }
                     }
                 } else {
-                    info!("No room found for connection {}", self.id);
+                    warn!("No room found for connection {}", self.id);
                 }
             }
             _ => {
@@ -558,20 +555,16 @@ impl ConnectionActor {
         match action {
             ConnectionAction::SendTCP(p) => {
                 let bytes = p.to_bytes();
-                info!("Send packet: {:?} to {}", p, self.id);
                 batch.extend_from_slice(&ConnectionActor::prepend_len(bytes));
             }
             ConnectionAction::SendTCPRaw(b) => {
-                info!("Send tcp {} bytes to {}", b.len(), self.id);
                 batch.extend_from_slice(&ConnectionActor::prepend_len(b));
             }
             ConnectionAction::SendUDPRaw(b) => {
-                info!("Send udp {} bytes to {}", b.len(), self.id);
                 self.udp_writer.send_raw(&b).await?;
             }
             ConnectionAction::Close => {
                 // Return error to break loop
-                info!("Close connection {}", self.id);
                 return Err(anyhow::anyhow!("Closed"));
             }
             ConnectionAction::RegisterUDP(addr) => {

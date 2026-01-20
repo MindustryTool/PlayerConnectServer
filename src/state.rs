@@ -230,7 +230,7 @@ impl Rooms {
                         continue;
                     }
                     if let Err(e) = sender.try_send(action.clone()) {
-                        info!("Failed to broadcast to {}: {}", id, e);
+                        warn!("Failed to broadcast to {}: {}", id, e);
                     }
                 }
             }
@@ -266,7 +266,7 @@ impl Rooms {
         };
 
         if let Err(e) = sender.try_send(action) {
-            info!(
+            warn!(
                 "Failed to forward to host {}: {}",
                 room.host_connection_id, e
             );
@@ -316,7 +316,7 @@ impl Rooms {
                     connection_id,
                 }));
                 if let Err(e) = sender.try_send(ConnectionAction::SendTCP(packet)) {
-                    info!(
+                    warn!(
                         "Failed to forward idle packet to host {}: {}",
                         room.host_connection_id, e
                     );
@@ -492,7 +492,7 @@ impl AppState {
 
                 for sender in members {
                     if let Err(e) = sender.try_send(ConnectionAction::Close) {
-                        info!("Failed to send close action to member: {}", e);
+                        warn!("Failed to send close action to member: {}", e);
                     }
                 }
 

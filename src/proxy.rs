@@ -53,13 +53,12 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
                                 handle_register_udp(&state, connection_id, addr).await;
                             } else {
                                 // Normal packet, route it
-                                info!("Received UDP packet: {:?} from {:?}", packet, addr);
-
+                                
                                 if let Some((sender, _)) = state.get_route(&addr) {
                                     if let Err(e) = sender
                                         .try_send(ConnectionAction::ProcessPacket(packet, false))
                                     {
-                                        info!("Failed to forward UDP packet: {}", e);
+                                        warn!("Failed to forward UDP packet: {}", e);
                                     }
                                 } else {
                                     // Unknown UDP sender, ignore
