@@ -6,7 +6,6 @@ use crate::writer::{TcpWriter, UdpWriter};
 use bytes::Bytes;
 use std::io::Cursor;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, UdpSocket};
@@ -14,9 +13,6 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::packet::ConnectionId;
-
-static NEXT_CONNECTION_ID: AtomicI32 = AtomicI32::new(1);
-
 const UDP_BUFFER_SIZE: usize = 4096;
 const CHANNEL_CAPACITY: usize = 100;
 const PACKET_RATE_LIMIT_WINDOW: Duration = Duration::from_millis(3000);
@@ -53,7 +49,7 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
                                 handle_register_udp(&state, connection_id, addr).await;
                             } else {
                                 // Normal packet, route it
-                                
+
                                 if let Some((sender, _)) = state.get_route(&addr) {
                                     if let Err(e) = sender
                                         .try_send(ConnectionAction::ProcessPacket(packet, false))
@@ -103,7 +99,12 @@ async fn accept_tcp_connection(
             if let Err(e) = socket.set_nodelay(true) {
                 warn!("Failed to set nodelay for connection: {}", e);
             }
-            let id = ConnectionId(NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed));
+            let id = loop {
+                let id = ConnectionId(rand::random());
+                if !state.has_connection_id(id) {
+                    break id;
+                }
+            };
 
             let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
             let limiter = Arc::new(AtomicRateLimiter::new(

@@ -1,11 +1,11 @@
 use crate::config::Config;
 use crate::constant::ArcCloseReason;
+use crate::error::AppError;
 use crate::models::{RoomView, Stats};
 use crate::packet::{
     AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionId, ConnectionIdlingPacket,
     ConnectionJoinPacket, RoomId,
 };
-use crate::error::AppError;
 use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;
 use bytes::BytesMut;
@@ -385,6 +385,14 @@ impl AppState {
                 error!("{}", err)
             }
         }
+    }
+
+    pub fn has_connection_id(&self, id: ConnectionId) -> bool {
+        self.connections
+            .read()
+            .ok()
+            .map(|conns| conns.contains_key(&id))
+            .unwrap_or(false)
     }
 
     pub fn register_udp(

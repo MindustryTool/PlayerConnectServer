@@ -689,6 +689,7 @@ dependencies = [
  "dashmap",
  "dotenvy",
  "futures",
+ "rand",
  "serde",
  "serde_json",
  "serde_repr",
