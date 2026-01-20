@@ -2,10 +2,10 @@ pub mod config;
 pub mod connection;
 pub mod constant;
 pub mod error;
-pub mod http_server;
+pub mod http;
 pub mod models;
 pub mod packet;
-pub mod proxy_server;
+pub mod proxy;
 pub mod rate;
 pub mod state;
 pub mod utils;
@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     let proxy_state = state.clone();
     let proxy_port = config.player_connect_port;
     tokio::spawn(async move {
-        if let Err(e) = proxy_server::run(proxy_state, proxy_port).await {
+        if let Err(e) = proxy::run(proxy_state, proxy_port).await {
             tracing::error!("Proxy server error: {}", e);
         }
     });
@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
     // Start HTTP Server
     let http_state = state.clone();
     let http_port = config.player_connect_http_port;
-    http_server::run(http_state, http_port).await?;
+    http::run(http_state, http_port).await?;
 
     Ok(())
 }
