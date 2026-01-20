@@ -1,4 +1,6 @@
-use crate::state::{AppState, RemoveRemoveEvent, RoomUpdate, RoomUpdateEvent, RoomView};
+use crate::models::{RemoveRemoveEvent, RoomUpdateEvent, RoomView};
+use crate::packet::RoomId;
+use crate::state::{AppState, RoomUpdate};
 use axum::{
     extract::{Path, State},
     http::header,
@@ -36,7 +38,7 @@ async fn ping() -> impl IntoResponse {
 }
 
 async fn rooms_sse(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let rx = state.rooms.tx.subscribe();
+    let rx = state.rooms.broadcast_sender.subscribe();
     let stream = BroadcastStream::new(rx);
 
     let initial_rooms: Vec<RoomUpdateEvent> = {
@@ -46,7 +48,7 @@ async fn rooms_sse(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             rooms
                 .iter()
                 .map(|(key, room)| RoomUpdateEvent {
-                    room_id: key.clone(),
+                    room_id: key.0.clone(),
                     data: RoomView::from(room),
                 })
                 .collect()
@@ -68,13 +70,13 @@ async fn rooms_sse(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 RoomUpdate::Update { id, data } => Event::default()
                     .event("update")
                     .json_data(vec![RoomUpdateEvent {
-                        room_id: id.clone(),
+                        room_id: id.0,
                         data: RoomView::from(&data),
                     }])
                     .map_err(axum::BoxError::from),
                 RoomUpdate::Remove(id) => Event::default()
                     .event("remove")
-                    .json_data(RemoveRemoveEvent { room_id: id })
+                    .json_data(RemoveRemoveEvent { room_id: id.0 })
                     .map_err(axum::BoxError::from),
             };
 
@@ -101,7 +103,7 @@ async fn room_page(
 ) -> impl IntoResponse {
     let stats = {
         if let Some(rooms) = state.rooms.read() {
-            rooms.get(&room_id).map(|r| r.stats.clone())
+            rooms.get(&RoomId(room_id)).map(|r| r.stats.clone())
         } else {
             None
         }
@@ -167,9 +169,6 @@ async fn room_page(
     }
 }
 
-async fn room_port(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    // Return the TCP port (which is in config, maybe we should store it in state or config)
-    // For now hardcode or get from config if we passed it.
-    // Ideally pass config to state.
-    "11010" // Using default, should be dynamic
+async fn room_port(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    state.config.player_connect_port.to_string()
 }

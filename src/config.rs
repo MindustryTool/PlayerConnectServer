@@ -2,6 +2,7 @@ use anyhow::Result;
 use dotenvy::dotenv;
 use std::env;
 
+#[derive(Clone, Debug)]
 pub struct Config {
     pub player_connect_port: u16,
     pub player_connect_http_port: u16,

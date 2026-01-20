@@ -46,6 +46,6 @@ impl AtomicRateLimiter {
 fn current_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("Time went backwards")
         .as_millis() as u64
 }

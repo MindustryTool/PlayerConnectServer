@@ -1,14 +1,18 @@
-mod config;
-mod constant;
-mod packets;
-mod state;
-mod proxy_server;
-mod http_server;
-mod utils;
-mod rate;
+pub mod config;
+pub mod connection;
+pub mod constant;
+pub mod error;
+pub mod http_server;
+pub mod models;
+pub mod packet;
+pub mod proxy_server;
+pub mod rate;
+pub mod state;
+pub mod utils;
+pub mod writer;
 
-use crate::config::Config;
-use crate::state::AppState;
+use config::Config;
+use state::AppState;
 use std::sync::Arc;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -19,8 +23,7 @@ async fn main() -> anyhow::Result<()> {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .finish();
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("setting default subscriber failed");
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     // Load config
     let config = Config::from_env()?;
@@ -29,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
     info!("HTTP Port: {}", config.player_connect_http_port);
 
     // Initialize state
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new(config.clone()));
 
     // Start Proxy Server
     let proxy_state = state.clone();

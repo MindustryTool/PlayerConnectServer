@@ -1,14 +1,30 @@
-use crate::{
-    constant::{ArcCloseReason, CloseReason, MessageType},
-    state::Stats,
-};
-use anyhow::anyhow;
+use crate::constant::{ArcCloseReason, CloseReason, MessageType};
+use crate::models::Stats;
+use crate::error::AppError;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use std::convert::TryFrom;
 use std::io::Cursor;
-use tracing::info;
 
 pub const APP_PACKET_ID: i8 = -4;
 pub const FRAMEWORK_PACKET_ID: i8 = -2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConnectionId(pub i32);
+
+impl std::fmt::Display for ConnectionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RoomId(pub String);
+
+impl std::fmt::Display for RoomId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum AnyPacket {
@@ -22,8 +38,8 @@ pub enum FrameworkMessage {
     Ping { id: i32, is_reply: bool },
     DiscoverHost,
     KeepAlive,
-    RegisterUDP { connection_id: i32 },
-    RegisterTCP { connection_id: i32 },
+    RegisterUDP { connection_id: ConnectionId },
+    RegisterTCP { connection_id: ConnectionId },
 }
 
 #[derive(Debug, Clone)]
@@ -45,36 +61,36 @@ pub enum AppPacket {
 
 #[derive(Debug, Clone)]
 pub struct ConnectionPacketWrapPacket {
-    pub connection_id: i32,
+    pub connection_id: ConnectionId,
     pub is_tcp: bool,
     pub buffer: BytesMut,
 }
 
 #[derive(Debug, Clone)]
 pub struct ConnectionClosedPacket {
-    pub connection_id: i32,
+    pub connection_id: ConnectionId,
     pub reason: ArcCloseReason,
 }
 
 #[derive(Debug, Clone)]
 pub struct ConnectionJoinPacket {
-    pub connection_id: i32,
-    pub room_id: String,
+    pub connection_id: ConnectionId,
+    pub room_id: RoomId,
 }
 
 #[derive(Debug, Clone)]
 pub struct ConnectionIdlingPacket {
-    pub connection_id: i32,
+    pub connection_id: ConnectionId,
 }
 
 #[derive(Debug, Clone)]
 pub struct RoomLinkPacket {
-    pub room_id: String,
+    pub room_id: RoomId,
 }
 
 #[derive(Debug, Clone)]
 pub struct RoomJoinPacket {
-    pub room_id: String,
+    pub room_id: RoomId,
     pub password: String,
 }
 
@@ -114,9 +130,9 @@ pub struct StatsPacket {
 }
 
 impl AnyPacket {
-    pub fn read(buf: &mut Cursor<Bytes>) -> anyhow::Result<Self> {
+    pub fn read(buf: &mut Cursor<Bytes>) -> Result<Self, AppError> {
         if !buf.has_remaining() {
-            return Err(anyhow!("Empty packet"));
+            return Err(AppError::PacketParsing("Empty packet".to_string()));
         }
 
         let id = buf.get_i8();
@@ -152,13 +168,12 @@ impl AnyPacket {
                 payload.extend_from_slice(raw);
             }
         }
-
         payload
     }
 }
 
 impl FrameworkMessage {
-    pub fn read(buf: &mut Cursor<Bytes>) -> anyhow::Result<Self> {
+    pub fn read(buf: &mut Cursor<Bytes>) -> Result<Self, AppError> {
         let fid = buf.get_u8();
 
         match fid {
@@ -169,12 +184,15 @@ impl FrameworkMessage {
             1 => Ok(FrameworkMessage::DiscoverHost),
             2 => Ok(FrameworkMessage::KeepAlive),
             3 => Ok(FrameworkMessage::RegisterUDP {
-                connection_id: buf.get_i32(),
+                connection_id: ConnectionId(buf.get_i32()),
             }),
             4 => Ok(FrameworkMessage::RegisterTCP {
-                connection_id: buf.get_i32(),
+                connection_id: ConnectionId(buf.get_i32()),
             }),
-            _ => Err(anyhow!("Unknown Framework ID: {}", fid)),
+            _ => Err(AppError::PacketParsing(format!(
+                "Unknown Framework ID: {}",
+                fid
+            ))),
         }
     }
 
@@ -191,23 +209,23 @@ impl FrameworkMessage {
             FrameworkMessage::KeepAlive => buf.put_u8(2),
             FrameworkMessage::RegisterUDP { connection_id } => {
                 buf.put_u8(3);
-                buf.put_i32(*connection_id);
+                buf.put_i32(connection_id.0);
             }
             FrameworkMessage::RegisterTCP { connection_id } => {
                 buf.put_u8(4);
-                buf.put_i32(*connection_id);
+                buf.put_i32(connection_id.0);
             }
         }
     }
 }
 
 impl AppPacket {
-    pub fn read(buf: &mut Cursor<Bytes>) -> anyhow::Result<Self> {
+    pub fn read(buf: &mut Cursor<Bytes>) -> Result<Self, AppError> {
         let pid = buf.get_u8();
 
         match pid {
             0 => {
-                let connection_id = buf.get_i32();
+                let connection_id = ConnectionId(buf.get_i32());
                 let is_tcp = buf.get_u8() != 0;
 
                 let start = buf.position() as usize;
@@ -225,15 +243,15 @@ impl AppPacket {
                 ))
             }
             1 => Ok(AppPacket::ConnectionClosed(ConnectionClosedPacket {
-                connection_id: buf.get_i32(),
-                reason: ArcCloseReason::from(buf.get_u8()), // DcReason ordinal
+                connection_id: ConnectionId(buf.get_i32()),
+                reason: ArcCloseReason::try_from(buf.get_u8())?,
             })),
             2 => Ok(AppPacket::ConnectionJoin(ConnectionJoinPacket {
-                connection_id: buf.get_i32(),
-                room_id: read_string(buf)?,
+                connection_id: ConnectionId(buf.get_i32()),
+                room_id: RoomId(read_string(buf)?),
             })),
             3 => Ok(AppPacket::ConnectionIdling(ConnectionIdlingPacket {
-                connection_id: buf.get_i32(),
+                connection_id: ConnectionId(buf.get_i32()),
             })),
             4 => Ok(AppPacket::RoomCreationRequest(RoomCreationRequestPacket {
                 version: read_string(buf)?,
@@ -242,20 +260,20 @@ impl AppPacket {
             })),
             5 => Ok(AppPacket::RoomClosureRequest(RoomClosureRequestPacket)),
             6 => Ok(AppPacket::RoomClosed(RoomClosedPacket {
-                reason: unsafe { std::mem::transmute(buf.get_u8()) }, // Unsafe or impl TryFrom
+                reason: CloseReason::try_from(buf.get_u8())?,
             })),
             7 => Ok(AppPacket::RoomLink(RoomLinkPacket {
-                room_id: read_string(buf)?,
+                room_id: RoomId(read_string(buf)?),
             })),
             8 => Ok(AppPacket::RoomJoin(RoomJoinPacket {
-                room_id: read_string(buf)?,
+                room_id: RoomId(read_string(buf)?),
                 password: read_string(buf)?,
             })),
             9 => Ok(AppPacket::Message(MessagePacket {
                 message: read_string(buf)?,
             })),
             10 => Ok(AppPacket::Message2(Message2Packet {
-                message: unsafe { std::mem::transmute(buf.get_u8()) },
+                message: MessageType::try_from(buf.get_u8())?,
             })),
             11 => Ok(AppPacket::Popup(PopupPacket {
                 message: read_string(buf)?,
@@ -263,7 +281,10 @@ impl AppPacket {
             12 => Ok(AppPacket::Stats(StatsPacket {
                 data: read_stats(buf)?,
             })),
-            _ => Err(anyhow!("Unknown App Packet ID: {}", pid)),
+            _ => Err(AppError::PacketParsing(format!(
+                "Unknown App Packet ID: {}",
+                pid
+            ))),
         }
     }
 
@@ -273,23 +294,23 @@ impl AppPacket {
         match self {
             AppPacket::ConnectionPacketWrap(p) => {
                 buf.put_u8(0);
-                buf.put_i32(p.connection_id);
+                buf.put_i32(p.connection_id.0);
                 buf.put_u8(if p.is_tcp { 1 } else { 0 });
                 buf.extend_from_slice(&p.buffer);
             }
             AppPacket::ConnectionClosed(p) => {
                 buf.put_u8(1);
-                buf.put_i32(p.connection_id);
+                buf.put_i32(p.connection_id.0);
                 buf.put_u8(p.reason as u8);
             }
             AppPacket::ConnectionJoin(p) => {
                 buf.put_u8(2);
-                buf.put_i32(p.connection_id);
-                write_string(buf, &p.room_id);
+                buf.put_i32(p.connection_id.0);
+                write_string(buf, &p.room_id.0);
             }
             AppPacket::ConnectionIdling(p) => {
                 buf.put_u8(3);
-                buf.put_i32(p.connection_id);
+                buf.put_i32(p.connection_id.0);
             }
             AppPacket::RoomCreationRequest(_) => {
                 panic!("Client only")
@@ -303,11 +324,11 @@ impl AppPacket {
             }
             AppPacket::RoomLink(p) => {
                 buf.put_u8(7);
-                write_string(buf, &p.room_id);
+                write_string(buf, &p.room_id.0);
             }
             AppPacket::RoomJoin(p) => {
                 buf.put_u8(8);
-                write_string(buf, &p.room_id);
+                write_string(buf, &p.room_id.0);
                 write_string(buf, &p.password);
             }
             AppPacket::Message(p) => {
@@ -329,30 +350,29 @@ impl AppPacket {
     }
 }
 
-// Helper to read/write strings
-pub fn read_string(buf: &mut Cursor<Bytes>) -> anyhow::Result<String> {
+pub fn read_string(buf: &mut Cursor<Bytes>) -> Result<String, AppError> {
     if buf.remaining() < 2 {
-        return Err(anyhow!(
+        return Err(AppError::PacketParsing(format!(
             "Not enough bytes for string length: {}",
             buf.remaining()
-        ));
+        )));
     }
 
     let len = buf.get_u16() as usize;
 
     if buf.remaining() < len {
-        return Err(anyhow!(
+        return Err(AppError::PacketParsing(format!(
             "Not enough bytes for string content, expected {}, got {}",
             len,
             buf.remaining()
-        ));
+        )));
     }
 
     let mut bytes = vec![0u8; len];
 
     buf.copy_to_slice(&mut bytes);
 
-    String::from_utf8(bytes).map_err(|e| anyhow!(e))
+    String::from_utf8(bytes).map_err(|e| AppError::PacketParsing(e.to_string()))
 }
 
 pub fn write_string(buf: &mut BytesMut, s: &str) {
@@ -361,14 +381,17 @@ pub fn write_string(buf: &mut BytesMut, s: &str) {
     buf.put_slice(bytes);
 }
 
-pub fn read_stats(buf: &mut Cursor<Bytes>) -> anyhow::Result<Stats> {
+pub fn read_stats(buf: &mut Cursor<Bytes>) -> Result<Stats, AppError> {
     let json = read_string(buf)?;
 
     match serde_json::from_str::<Stats>(&json) {
         Ok(data) => Ok(data),
         Err(e) => {
-            info!("Failed to parse stats: {}", json);
-            Err(anyhow!(e))
+            // Log? No, we return error.
+            Err(AppError::PacketParsing(format!(
+                "Failed to parse stats: {}. JSON: {}",
+                e, json
+            )))
         }
     }
 }

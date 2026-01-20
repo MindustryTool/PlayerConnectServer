@@ -1,10 +1,14 @@
+use crate::config::Config;
 use crate::constant::ArcCloseReason;
-use crate::packets::{AnyPacket, ConnectionClosedPacket, ConnectionJoinPacket};
+use crate::models::{RoomView, Stats};
+use crate::packet::{
+    AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionId, ConnectionIdlingPacket,
+    ConnectionJoinPacket, RoomId,
+};
+use crate::error::AppError;
 use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;
-use anyhow::anyhow;
 use bytes::BytesMut;
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
@@ -24,45 +28,31 @@ pub enum ConnectionAction {
 
 #[derive(Debug, Clone)]
 pub struct Room {
-    pub id: String,
-    pub host_connection_id: i32,
+    pub id: RoomId,
+    pub host_connection_id: ConnectionId,
     pub password: Option<String>,
     pub created_at: u128,
     pub updated_at: u128,
-    pub members: HashMap<i32, mpsc::Sender<ConnectionAction>>,
+    pub members: HashMap<ConnectionId, mpsc::Sender<ConnectionAction>>,
     pub stats: Stats,
     pub ping: u128,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Stats {
-    pub players: Vec<Player>,
-    #[serde(rename = "mapName")]
-    pub map_name: String,
-    pub name: String,
-    pub gamemode: String,
-    pub mods: Vec<String>,
-    pub locale: String,
-    pub version: String,
-    #[serde(rename = "createdAt")]
-    pub created_at: u128,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Player {
-    pub name: String,
-    pub locale: String,
+#[derive(Clone, Debug)]
+pub enum RoomUpdate {
+    Update { id: RoomId, data: Room },
+    Remove(RoomId),
 }
 
 pub struct Rooms {
-    pub rooms: RwLock<HashMap<String, Room>>,
-    pub tx: tokio::sync::broadcast::Sender<RoomUpdate>,
+    pub rooms: RwLock<HashMap<RoomId, Room>>,
+    pub broadcast_sender: tokio::sync::broadcast::Sender<RoomUpdate>,
     // Keep a receiver to prevent the channel from closing when all clients disconnect
-    pub _rx: tokio::sync::broadcast::Receiver<RoomUpdate>,
+    pub _broadcast_receiver: tokio::sync::broadcast::Receiver<RoomUpdate>,
 }
 
 pub struct RoomInit {
-    pub connection_id: i32,
+    pub connection_id: ConnectionId,
     pub password: String,
     pub stats: Stats,
     pub sender: mpsc::Sender<ConnectionAction>,
@@ -71,15 +61,15 @@ pub struct RoomInit {
 impl Rooms {
     pub fn get_sender(
         &self,
-        room_id: &str,
-        connection_id: i32,
+        room_id: &RoomId,
+        connection_id: ConnectionId,
     ) -> Option<mpsc::Sender<ConnectionAction>> {
         let rooms = self.rooms.read().ok()?;
 
         rooms.get(room_id)?.members.get(&connection_id).cloned()
     }
 
-    pub fn find_connection_room_id(&self, connection_id: i32) -> Option<String> {
+    pub fn find_connection_room_id(&self, connection_id: ConnectionId) -> Option<RoomId> {
         let rooms = self.rooms.read().ok()?;
 
         rooms
@@ -88,17 +78,17 @@ impl Rooms {
             .map(|(id, _)| id.clone())
     }
 
-    pub fn read(&self) -> Option<RwLockReadGuard<'_, HashMap<String, Room>>> {
+    pub fn read(&self) -> Option<RwLockReadGuard<'_, HashMap<RoomId, Room>>> {
         self.rooms.read().ok()
     }
 
     pub fn join(
         &self,
-        connection_id: i32,
-        room_id: &String,
+        connection_id: ConnectionId,
+        room_id: &RoomId,
         sender: mpsc::Sender<ConnectionAction>,
-    ) -> anyhow::Result<()> {
-        let mut rooms = self.rooms.write().map_err(|_| anyhow!("Lock poison"))?;
+    ) -> Result<(), AppError> {
+        let mut rooms = self.rooms.write().map_err(|_| AppError::LockPoison)?;
 
         if let Some(room) = rooms.get_mut(room_id) {
             room.members.insert(connection_id, sender);
@@ -113,12 +103,10 @@ impl Rooms {
                     return Ok(());
                 }
             };
-            let packet = AnyPacket::App(crate::packets::AppPacket::ConnectionJoin(
-                ConnectionJoinPacket {
-                    connection_id,
-                    room_id: room_id.clone(),
-                },
-            ));
+            let packet = AnyPacket::App(AppPacket::ConnectionJoin(ConnectionJoinPacket {
+                connection_id,
+                room_id: room_id.clone(),
+            }));
 
             if let Err(e) = sender.try_send(ConnectionAction::SendTCP(packet)) {
                 info!(
@@ -127,13 +115,13 @@ impl Rooms {
                 );
             }
         } else {
-            return Err(anyhow!("Room not found"));
+            return Err(AppError::RoomNotFound(room_id.to_string()));
         }
 
         Ok(())
     }
 
-    pub fn leave(&self, connection_id: i32) -> Option<String> {
+    pub fn leave(&self, connection_id: ConnectionId) -> Option<RoomId> {
         let mut rooms = self.rooms.write().ok()?;
 
         let room_id = rooms
@@ -155,12 +143,10 @@ impl Rooms {
                 }
             };
 
-            let packet = AnyPacket::App(crate::packets::AppPacket::ConnectionClosed(
-                ConnectionClosedPacket {
-                    connection_id,
-                    reason: ArcCloseReason::Closed,
-                },
-            ));
+            let packet = AnyPacket::App(AppPacket::ConnectionClosed(ConnectionClosedPacket {
+                connection_id,
+                reason: ArcCloseReason::Closed,
+            }));
 
             if let Err(e) = sender.try_send(ConnectionAction::SendTCP(packet)) {
                 info!(
@@ -173,7 +159,7 @@ impl Rooms {
         Some(room_id)
     }
 
-    pub fn create(&self, init: RoomInit) -> String {
+    pub fn create(&self, init: RoomInit) -> RoomId {
         let RoomInit {
             password,
             connection_id,
@@ -187,7 +173,7 @@ impl Rooms {
             Some(password)
         };
 
-        let room_id = Uuid::now_v7().to_string();
+        let room_id = RoomId(Uuid::now_v7().to_string());
         let mut members = HashMap::new();
 
         members.insert(connection_id, sender);
@@ -210,7 +196,7 @@ impl Rooms {
         room_id
     }
 
-    pub fn close(&self, room_id: &String) {
+    pub fn close(&self, room_id: &RoomId) {
         let removed = {
             if let Ok(mut rooms) = self.rooms.write() {
                 rooms.remove(room_id)
@@ -222,13 +208,21 @@ impl Rooms {
         if removed.is_some() {
             info!("Room closed {}", room_id);
 
-            if let Err(err) = self.tx.send(RoomUpdate::Remove(room_id.clone())) {
+            if let Err(err) = self
+                .broadcast_sender
+                .send(RoomUpdate::Remove(room_id.clone()))
+            {
                 error!("Failed to send remove room event: {}", err);
             };
         }
     }
 
-    pub fn broadcast(&self, room_id: &str, action: ConnectionAction, exclude_id: Option<i32>) {
+    pub fn broadcast(
+        &self,
+        room_id: &RoomId,
+        action: ConnectionAction,
+        exclude_id: Option<ConnectionId>,
+    ) {
         if let Ok(rooms) = self.rooms.read() {
             if let Some(room) = rooms.get(room_id) {
                 for (id, sender) in &room.members {
@@ -243,7 +237,7 @@ impl Rooms {
         }
     }
 
-    pub fn forward_to_host(&self, room_id: &str, action: ConnectionAction) {
+    pub fn forward_to_host(&self, room_id: &RoomId, action: ConnectionAction) {
         let rooms = match self.rooms.read() {
             Ok(rooms) => rooms,
             Err(e) => {
@@ -279,7 +273,10 @@ impl Rooms {
         }
     }
 
-    pub fn get_room_members(&self, room_id: &str) -> Vec<(i32, mpsc::Sender<ConnectionAction>)> {
+    pub fn get_room_members(
+        &self,
+        room_id: &RoomId,
+    ) -> Vec<(ConnectionId, mpsc::Sender<ConnectionAction>)> {
         let rooms = match self.rooms.read() {
             Ok(rooms) => rooms,
             Err(e) => {
@@ -296,7 +293,7 @@ impl Rooms {
         }
     }
 
-    pub fn idle(&self, room_id: &str, connection_id: i32) {
+    pub fn idle(&self, room_id: &RoomId, connection_id: ConnectionId) {
         let rooms = match self.rooms.read() {
             Ok(rooms) => rooms,
             Err(_) => return,
@@ -315,9 +312,9 @@ impl Rooms {
 
             // Send to host
             if let Some(sender) = room.members.get(&room.host_connection_id) {
-                let packet = AnyPacket::App(crate::packets::AppPacket::ConnectionIdling(
-                    crate::packets::ConnectionIdlingPacket { connection_id },
-                ));
+                let packet = AnyPacket::App(AppPacket::ConnectionIdling(ConnectionIdlingPacket {
+                    connection_id,
+                }));
                 if let Err(e) = sender.try_send(ConnectionAction::SendTCP(packet)) {
                     info!(
                         "Failed to forward idle packet to host {}: {}",
@@ -329,22 +326,44 @@ impl Rooms {
     }
 }
 
+impl From<&Room> for RoomView {
+    fn from(room: &Room) -> Self {
+        Self {
+            name: room.stats.name.clone(),
+            status: "UP".to_string(),
+            is_private: false,
+            is_secured: room.password.is_some(),
+            players: room.stats.players.clone(),
+            map_name: room.stats.map_name.clone(),
+            gamemode: room.stats.gamemode.clone(),
+            mods: room.stats.mods.clone(),
+            locale: room.stats.locale.clone(),
+            version: room.stats.version.clone(),
+            created_at: room.stats.created_at,
+            ping: room.ping,
+        }
+    }
+}
+
 pub struct AppState {
+    pub config: Config,
     pub rooms: Rooms,
-    pub connections: RwLock<HashMap<i32, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
+    pub connections:
+        RwLock<HashMap<ConnectionId, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
     pub udp_routes:
         RwLock<HashMap<SocketAddr, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
-    pub notified_idle: RwLock<HashSet<i32>>,
+    pub notified_idle: RwLock<HashSet<ConnectionId>>,
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         let (tx, rx) = tokio::sync::broadcast::channel(1024);
         Self {
+            config,
             rooms: Rooms {
                 rooms: RwLock::new(HashMap::new()),
-                tx,
-                _rx: rx,
+                broadcast_sender: tx,
+                _broadcast_receiver: rx,
             },
             connections: RwLock::new(HashMap::new()),
             udp_routes: RwLock::new(HashMap::new()),
@@ -354,7 +373,7 @@ impl AppState {
 
     pub fn register_connection(
         &self,
-        id: i32,
+        id: ConnectionId,
         sender: mpsc::Sender<ConnectionAction>,
         limiter: Arc<AtomicRateLimiter>,
     ) {
@@ -385,7 +404,7 @@ impl AppState {
         }
     }
 
-    pub fn get_sender(&self, id: i32) -> Option<mpsc::Sender<ConnectionAction>> {
+    pub fn get_sender(&self, id: ConnectionId) -> Option<mpsc::Sender<ConnectionAction>> {
         self.connections
             .read()
             .ok()?
@@ -400,7 +419,7 @@ impl AppState {
         self.udp_routes.read().ok()?.get(addr).cloned()
     }
 
-    pub fn idle(&self, connection_id: i32) {
+    pub fn idle(&self, connection_id: ConnectionId) {
         // Only process valid connections
         if let Ok(conns) = self.connections.read() {
             if !conns.contains_key(&connection_id) {
@@ -427,13 +446,13 @@ impl AppState {
         }
     }
 
-    pub fn reset_idle(&self, connection_id: i32) {
+    pub fn reset_idle(&self, connection_id: ConnectionId) {
         if let Ok(mut idle_set) = self.notified_idle.write() {
             idle_set.remove(&connection_id);
         }
     }
 
-    pub fn remove_connection(&self, connection_id: i32) {
+    pub fn remove_connection(&self, connection_id: ConnectionId) {
         if let Ok(mut conns) = self.connections.write() {
             conns.remove(&connection_id);
         }
@@ -479,64 +498,6 @@ impl AppState {
 
                 self.rooms.close(&room_id);
             }
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum RoomUpdate {
-    Update { id: String, data: Room },
-    Remove(String),
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct RemoveRemoveEvent {
-    #[serde(rename = "roomId")]
-    pub room_id: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct RoomUpdateEvent {
-    #[serde(rename = "roomId")]
-    pub room_id: String,
-    pub data: RoomView,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct RoomView {
-    pub name: String,
-    pub status: String,
-    #[serde(rename = "isPrivate")]
-    pub is_private: bool,
-    #[serde(rename = "isSecured")]
-    pub is_secured: bool,
-    pub players: Vec<Player>,
-    #[serde(rename = "mapName")]
-    pub map_name: String,
-    pub gamemode: String,
-    pub mods: Vec<String>,
-    pub locale: String,
-    pub version: String,
-    #[serde(rename = "createdAt")]
-    pub created_at: u128,
-    pub ping: u128,
-}
-
-impl RoomView {
-    pub fn from(room: &Room) -> Self {
-        Self {
-            name: room.stats.name.clone(),
-            status: "UP".to_string(),
-            is_private: false,
-            is_secured: room.password.is_some(),
-            players: room.stats.players.clone(),
-            map_name: room.stats.map_name.clone(),
-            gamemode: room.stats.gamemode.clone(),
-            mods: room.stats.mods.clone(),
-            locale: room.stats.locale.clone(),
-            version: room.stats.version.clone(),
-            created_at: room.stats.created_at,
-            ping: room.ping,
         }
     }
 }
