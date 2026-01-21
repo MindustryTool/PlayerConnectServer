@@ -382,10 +382,10 @@ impl ConnectionActor {
                         id: room.id.clone(),
                         data: room.clone(),
                     }) {
-                        info!("Fail to broadcast room update {}", err);
+                        warn!("Fail to broadcast room update {}", err);
                     }
 
-                    warn!("Room {} created by connection {}.", room_id, self.id);
+                    info!("Room {} created by connection {}.", room_id, self.id);
                 }
             }
             AppPacket::RoomClosureRequest(_) => {
@@ -604,7 +604,7 @@ impl ConnectionActor {
     }
 
     fn is_idle(&self) -> bool {
-        self.rx.len() < 5
+        true
     }
 
     fn notify_idle(&mut self) {
