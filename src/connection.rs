@@ -18,7 +18,7 @@ use tracing::{error, info, warn};
 
 const TCP_BUFFER_SIZE: usize = 32768;
 const CONNECTION_TIME_OUT_MS: u64 = 30000;
-const IDLE_TIMEOUT_MS: u64 = 5000;
+const IDLE_TIMEOUT_MS: u64 = 1000;
 const KEEP_ALIVE_INTERVAL_MS: u64 = 2000;
 const PACKET_LENGTH_LENGTH: usize = 2;
 const TICK_INTERVAL_SECS: u64 = 1;
