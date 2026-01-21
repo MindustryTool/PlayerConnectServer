@@ -8,7 +8,7 @@ use crate::state::{AppState, ConnectionAction, RoomInit, RoomUpdate};
 use crate::utils::current_time_millis;
 use crate::writer::{TcpWriter, UdpWriter};
 use anyhow::anyhow;
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io::Cursor;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -31,7 +31,7 @@ pub struct ConnectionActor {
     pub udp_writer: UdpWriter,
     pub limiter: Arc<AtomicRateLimiter>,
     pub last_read: Instant,
-    pub packet_queue: Vec<BytesMut>,
+    pub packet_queue: Vec<Bytes>,
 }
 
 impl ConnectionActor {
@@ -555,7 +555,7 @@ impl ConnectionActor {
         match action {
             ConnectionAction::SendTCP(p) => {
                 let bytes = p.to_bytes();
-                batch.extend_from_slice(&ConnectionActor::prepend_len(bytes));
+                batch.extend_from_slice(&ConnectionActor::prepend_len(bytes.freeze()));
             }
             ConnectionAction::SendTCPRaw(b) => {
                 batch.extend_from_slice(&ConnectionActor::prepend_len(b));
@@ -599,7 +599,7 @@ impl ConnectionActor {
         Ok(())
     }
 
-    pub fn prepend_len(payload: BytesMut) -> BytesMut {
+    pub fn prepend_len(payload: Bytes) -> BytesMut {
         let mut out: BytesMut = BytesMut::with_capacity(2 + payload.len());
 
         out.put_u16(payload.len() as u16);
@@ -610,7 +610,7 @@ impl ConnectionActor {
 
     async fn write_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {
         self.tcp_writer
-            .write(&ConnectionActor::prepend_len(packet.to_bytes()))
+            .write(&ConnectionActor::prepend_len(packet.to_bytes().freeze()))
             .await
     }
 }

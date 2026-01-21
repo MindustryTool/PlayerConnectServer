@@ -14,9 +14,9 @@ use tracing::{error, info, warn};
 
 use crate::packet::ConnectionId;
 const UDP_BUFFER_SIZE: usize = 4096;
-const CHANNEL_CAPACITY: usize = 100;
+const CHANNEL_CAPACITY: usize = 1024;
 const PACKET_RATE_LIMIT_WINDOW: Duration = Duration::from_millis(3000);
-const PACKET_RATE_LIMIT: u32 = 300;
+const PACKET_RATE_LIMIT: u32 = 1000;
 
 pub async fn run(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
     let address = format!("0.0.0.0:{}", port);
@@ -25,7 +25,11 @@ pub async fn run(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
 
     info!("Proxy Server listening on TCP/UDP {}", port);
 
-    spawn_udp_listener(state.clone(), udp_socket.clone());
+    // Spawn multiple UDP listeners for better throughput
+    for _ in 0..4 {
+        spawn_udp_listener(state.clone(), udp_socket.clone());
+    }
+
     accept_tcp_connection(state, tcp_listener, udp_socket).await
 }
 

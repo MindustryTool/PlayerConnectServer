@@ -1,6 +1,6 @@
 use crate::constant::{ArcCloseReason, CloseReason, MessageType};
-use crate::models::Stats;
 use crate::error::AppError;
+use crate::models::Stats;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::convert::TryFrom;
 use std::io::Cursor;
@@ -30,7 +30,7 @@ impl std::fmt::Display for RoomId {
 pub enum AnyPacket {
     Framework(FrameworkMessage),
     App(AppPacket),
-    Raw(BytesMut),
+    Raw(Bytes),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -63,7 +63,7 @@ pub enum AppPacket {
 pub struct ConnectionPacketWrapPacket {
     pub connection_id: ConnectionId,
     pub is_tcp: bool,
-    pub buffer: BytesMut,
+    pub buffer: Bytes,
 }
 
 #[derive(Debug, Clone)]
@@ -149,7 +149,7 @@ impl AnyPacket {
                 let bytes = buf.get_ref().slice(start..end);
                 buf.advance(remaining);
 
-                Ok(AnyPacket::Raw(BytesMut::from(bytes)))
+                Ok(AnyPacket::Raw(bytes))
             }
         }
     }
@@ -238,7 +238,7 @@ impl AppPacket {
                     ConnectionPacketWrapPacket {
                         connection_id,
                         is_tcp,
-                        buffer: BytesMut::from(buffer),
+                        buffer,
                     },
                 ))
             }
