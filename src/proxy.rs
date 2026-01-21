@@ -45,23 +45,25 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
 
                     match AnyPacket::read(&mut cursor) {
                         Ok(packet) => {
-                            if let AnyPacket::Framework(FrameworkMessage::RegisterUDP {
-                                connection_id,
-                            }) = packet
-                            {
-                                handle_register_udp(&state, connection_id, addr).await;
-                            } else {
-                                let Some((sender, _)) = state.get_route(&addr) else {
-                                    warn!("Unknown UDP sender: {}", addr);
-                                    continue;
-                                };
-
-                                if let Err(e) =
-                                    sender.try_send(ConnectionAction::ProcessPacket(packet, false))
-                                {
-                                    warn!("Failed to forward UDP packet: {}", e);
+                            match packet {
+                                AnyPacket::Framework(FrameworkMessage::RegisterUDP {
+                                    connection_id,
+                                }) => {
+                                    handle_register_udp(&state, connection_id, addr).await;
                                 }
-                            }
+                                _ => {
+                                    let Some((sender, _)) = state.get_route(&addr) else {
+                                        warn!("Unknown UDP sender: {}", addr);
+                                        continue;
+                                    };
+
+                                    if let Err(e) = sender
+                                        .try_send(ConnectionAction::ProcessPacket(packet, false))
+                                    {
+                                        warn!("Failed to forward UDP packet: {}", e);
+                                    }
+                                }
+                            };
                         }
                         Err(e) => {
                             warn!("UDP Parse Error from {}: {}", addr, e);
