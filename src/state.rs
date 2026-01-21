@@ -9,7 +9,7 @@ use crate::packet::{
 use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;
 use bytes::Bytes;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 use tokio::sync::mpsc;
@@ -352,7 +352,6 @@ pub struct AppState {
         RwLock<HashMap<ConnectionId, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
     pub udp_routes:
         RwLock<HashMap<SocketAddr, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
-    pub notified_idle: RwLock<HashSet<ConnectionId>>,
 }
 
 impl AppState {
@@ -367,7 +366,6 @@ impl AppState {
             },
             connections: RwLock::new(HashMap::new()),
             udp_routes: RwLock::new(HashMap::new()),
-            notified_idle: RwLock::new(HashSet::new()),
         }
     }
 
@@ -436,27 +434,9 @@ impl AppState {
         } else {
             return;
         }
-
-        // Check and set notified_idle
-        let should_notify = if let Ok(mut idle_set) = self.notified_idle.write() {
-            idle_set.insert(connection_id)
-        } else {
-            false
-        };
-
-        if !should_notify {
-            return;
-        }
-
         // Find room and notify host
         if let Some(room_id) = self.rooms.find_connection_room_id(connection_id) {
             self.rooms.idle(&room_id, connection_id);
-        }
-    }
-
-    pub fn reset_idle(&self, connection_id: ConnectionId) {
-        if let Ok(mut idle_set) = self.notified_idle.write() {
-            idle_set.remove(&connection_id);
         }
     }
 
@@ -464,9 +444,6 @@ impl AppState {
         if let Ok(mut conns) = self.connections.write() {
             conns.remove(&connection_id);
         }
-
-        self.reset_idle(connection_id);
-
         // Handle room logic
         let room_id_opt = self.rooms.leave(connection_id);
 

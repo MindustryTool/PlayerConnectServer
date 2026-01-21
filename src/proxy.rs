@@ -129,6 +129,7 @@ async fn accept_tcp_connection(
                 limiter,
                 last_read: Instant::now(),
                 packet_queue: Vec::new(),
+                notified_idle: false,
             };
 
             if let Err(e) = actor.run(reader).await {

@@ -31,6 +31,7 @@ pub struct ConnectionActor {
     pub limiter: Arc<AtomicRateLimiter>,
     pub last_read: Instant,
     pub packet_queue: Vec<Bytes>,
+    pub notified_idle: bool,
 }
 
 impl ConnectionActor {
@@ -41,6 +42,9 @@ impl ConnectionActor {
 
         self.write_packet(register_packet).await?;
 
+        
+        self.notify_idle();
+
         let mut buf = BytesMut::with_capacity(TCP_BUFFER_SIZE);
         let mut tmp_buf = [0u8; TCP_BUFFER_SIZE];
         let mut tick_interval = tokio::time::interval(Duration::from_secs(TICK_INTERVAL_SECS));
@@ -49,7 +53,7 @@ impl ConnectionActor {
             let mut batch = BytesMut::new();
 
             tokio::select! {
-                
+
                 action = self.rx.recv() => {
                     if let Some(action) = action {
                         self.handle_action(action, &mut batch).await?;
@@ -57,15 +61,16 @@ impl ConnectionActor {
                         while let Ok(action) = self.rx.try_recv() {
                             self.handle_action(action, &mut batch).await?;
                         }
-                        
+
                         if !batch.is_empty() {
                             self.tcp_writer.write(&batch).await?;
                         }
                     } else {
-                        
+
                         break;
                     }
                 }
+
 
                 
                 read_result = reader.read(&mut tmp_buf) => {
@@ -73,7 +78,9 @@ impl ConnectionActor {
                         Ok(0) => break, 
                         Ok(n) => {
                             self.last_read = Instant::now();
-                            self.state.reset_idle(self.id);
+                            
+                            
+                            self.notified_idle = false;
 
                             buf.extend_from_slice(&tmp_buf[..n]);
                             self.process_tcp_buffer(&mut buf).await?;
@@ -83,6 +90,7 @@ impl ConnectionActor {
                 }
 
 
+
                 
                 _ = tick_interval.tick() => {
                     if self.last_read.elapsed() > Duration::from_millis(CONNECTION_TIME_OUT_MS) {
@@ -90,8 +98,10 @@ impl ConnectionActor {
                         break;
                     }
 
-                    if self.is_idle() {
-                        self.state.idle(self.id);
+                    
+                    
+                    if self.is_idle() && !self.notified_idle {
+                        self.notify_idle();
                     }
 
                     if self.tcp_writer.last_write.elapsed() > Duration::from_millis(KEEP_ALIVE_INTERVAL_MS) {
@@ -133,7 +143,6 @@ impl ConnectionActor {
                     continue;
                 }
             }
-            
         }
         Ok(())
     }
@@ -224,13 +233,8 @@ impl ConnectionActor {
                     .await?;
                 }
             }
-            FrameworkMessage::KeepAlive => {
-                
-            }
-            FrameworkMessage::RegisterUDP { .. } => {
-                
-                
-            }
+            FrameworkMessage::KeepAlive => {}
+            FrameworkMessage::RegisterUDP { .. } => {}
             _ => {
                 warn!("Unhandled Framework Packet: {:?}", packet);
             }
@@ -524,8 +528,6 @@ impl ConnectionActor {
                             return Ok(());
                         };
 
-                        self.state.reset_idle(connection_id);
-
                         let action = if is_tcp {
                             ConnectionAction::SendTCPRaw(buffer)
                         } else {
@@ -552,11 +554,9 @@ impl ConnectionActor {
         action: ConnectionAction,
         batch: &mut BytesMut,
     ) -> anyhow::Result<()> {
-        
         match action {
             ConnectionAction::SendTCP(p) => {
                 if let AnyPacket::App(AppPacket::ConnectionPacketWrap(_)) = &p {
-                    
                 } else {
                     info!("Connection {} sending TCP packet: {:?}", self.id, p);
                 }
@@ -570,7 +570,6 @@ impl ConnectionActor {
                 self.udp_writer.send_raw(&b).await?;
             }
             ConnectionAction::Close => {
-                
                 return Err(anyhow::anyhow!("Closed"));
             }
             ConnectionAction::RegisterUDP(addr) => {
@@ -582,7 +581,6 @@ impl ConnectionActor {
 
                 info!("New connection {} from {}", self.id, addr);
 
-                
                 if let Some(sender) = self.state.get_sender(self.id) {
                     self.state.register_udp(addr, sender, self.limiter.clone());
                 } else {
@@ -591,14 +589,13 @@ impl ConnectionActor {
                         self.id
                     ));
                 }
-                
+
                 self.write_packet(AnyPacket::Framework(FrameworkMessage::RegisterUDP {
                     connection_id: self.id,
                 }))
                 .await?;
             }
             ConnectionAction::ProcessPacket(packet, is_tcp) => {
-                self.state.reset_idle(self.id);
                 self.handle_packet(packet, is_tcp).await?;
             }
         }
@@ -621,6 +618,11 @@ impl ConnectionActor {
     }
 
     fn is_idle(&self) -> bool {
-        self.packet_queue.is_empty()
+        self.rx.len() < 5
+    }
+
+    fn notify_idle(&mut self) {
+        self.state.idle(self.id);
+        self.notified_idle = true;
     }
 }
