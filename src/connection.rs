@@ -50,6 +50,34 @@ impl ConnectionActor {
             let mut batch = BytesMut::new();
 
             tokio::select! {
+                // Channel Read
+                action = self.rx.recv() => {
+                    if let Some(action) = action {
+                        let start = Instant::now();
+                        // info!("Connection {} received action from channel: {:?}", self.id, action);
+                        self.handle_action(action, &mut batch).await?;
+
+                        while let Ok(action) = self.rx.try_recv() {
+                            // info!("Connection {} received extra action from channel: {:?}", self.id, action);
+                            self.handle_action(action, &mut batch).await?;
+                        }
+                        // Flush batch
+                        if !batch.is_empty() {
+                            let batch_len = batch.len();
+                            self.tcp_writer.write(&batch).await?;
+                            info!("Connection {} flushed {} bytes to TCP", self.id, batch_len);
+                        }
+                        let elapsed = start.elapsed();
+                        if elapsed > Duration::from_millis(100) {
+                            warn!("Connection {} channel batch processing took {:?}", self.id, elapsed);
+                        }
+                    } else {
+                        // Channel closed
+                        info!("Connection {} channel closed", self.id);
+                        break;
+                    }
+                }
+
                 // TCP Read
                 read_result = reader.read(&mut tmp_buf) => {
                     match read_result {
@@ -58,30 +86,21 @@ impl ConnectionActor {
                             self.last_read = Instant::now();
                             self.state.reset_idle(self.id);
 
+                            info!("Connection {} received {} bytes from TCP", self.id, n);
+
                             buf.extend_from_slice(&tmp_buf[..n]);
+
+                            let start = Instant::now();
                             self.process_tcp_buffer(&mut buf).await?;
+                            let elapsed = start.elapsed();
+                            if elapsed > Duration::from_millis(100) {
+                                warn!("Connection {} process_tcp_buffer took {:?}", self.id, elapsed);
+                            }
                         }
                         Err(e) => return Err(e.into()),
                     }
                 }
 
-                // Channel Read
-                action = self.rx.recv() => {
-                    if let Some(action) = action {
-                        self.handle_action(action, &mut batch).await?;
-
-                        while let Ok(action) = self.rx.try_recv() {
-                            self.handle_action(action, &mut batch).await?;
-                        }
-                        // Flush batch
-                        if !batch.is_empty() {
-                            self.tcp_writer.write(&batch).await?;
-                        }
-                    } else {
-                        // Channel closed
-                        break;
-                    }
-                }
 
                 // Tick
                 _ = tick_interval.tick() => {
@@ -609,8 +628,16 @@ impl ConnectionActor {
     }
 
     async fn write_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {
-        self.tcp_writer
+        let start = Instant::now();
+        let res = self
+            .tcp_writer
             .write(&ConnectionActor::prepend_len(packet.to_bytes().freeze()))
-            .await
+            .await;
+
+        let elapsed = start.elapsed();
+        if elapsed > Duration::from_millis(100) {
+            warn!("Connection {} write_packet took {:?}", self.id, elapsed);
+        }
+        res
     }
 }

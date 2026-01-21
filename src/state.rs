@@ -225,13 +225,22 @@ impl Rooms {
     ) {
         if let Ok(rooms) = self.rooms.read() {
             if let Some(room) = rooms.get(room_id) {
+                // info!("Broadcasting to room {} (members: {})", room_id, room.members.len());
+                let start = std::time::Instant::now();
+                let mut count = 0;
                 for (id, sender) in &room.members {
                     if Some(*id) == exclude_id {
                         continue;
                     }
                     if let Err(e) = sender.try_send(action.clone()) {
                         warn!("Failed to broadcast to {}: {}", id, e);
+                    } else {
+                        count += 1;
                     }
+                }
+                let elapsed = start.elapsed();
+                if elapsed > std::time::Duration::from_millis(10) {
+                     info!("Broadcast to {} members in room {} took {:?}", count, room_id, elapsed);
                 }
             }
         }
