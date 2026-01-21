@@ -296,7 +296,10 @@ impl Rooms {
     pub fn idle(&self, connection_id: ConnectionId) -> bool {
         let rooms = match self.rooms.read() {
             Ok(rooms) => rooms,
-            Err(_) => return true,
+            Err(err) => {
+                error!("Failed to acquire rooms read lock: {}", err);
+                return true;
+            }
         };
 
         if let Some(room) = rooms
@@ -305,6 +308,7 @@ impl Rooms {
             .map(|(_, room)| room)
         {
             if room.host_connection_id == connection_id {
+                info!("Host {} is idle", connection_id);
                 return true;
             }
 
