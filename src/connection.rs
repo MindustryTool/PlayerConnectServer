@@ -83,6 +83,8 @@ impl ConnectionActor {
                 }
 
                 _ = tick_interval.tick() => {
+                    info!("Connection {} tick", self.id);
+
                     if self.is_idle() && !self.notified_idle {
                         self.notify_idle();
                     } else if self.tcp_writer.last_write.elapsed() > KEEP_ALIVE_INTERVAL_MS {
