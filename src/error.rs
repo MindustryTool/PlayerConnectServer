@@ -19,7 +19,7 @@ pub enum AppError {
 
     #[error("Lock poison error")]
     LockPoison,
-    
+
     #[error("Invalid state: {0}")]
     InvalidState(String),
 

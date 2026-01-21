@@ -42,7 +42,6 @@ impl ConnectionActor {
 
         self.write_packet(register_packet).await?;
 
-        
         self.notify_idle();
 
         let mut buf = BytesMut::with_capacity(TCP_BUFFER_SIZE);
@@ -53,7 +52,6 @@ impl ConnectionActor {
             let mut batch = BytesMut::new();
 
             tokio::select! {
-
                 action = self.rx.recv() => {
                     if let Some(action) = action {
                         self.handle_action(action, &mut batch).await?;
@@ -66,20 +64,15 @@ impl ConnectionActor {
                             self.tcp_writer.write(&batch).await?;
                         }
                     } else {
-
                         break;
                     }
                 }
 
-
-                
                 read_result = reader.read(&mut tmp_buf) => {
                     match read_result {
-                        Ok(0) => break, 
+                        Ok(0) => break,
                         Ok(n) => {
                             self.last_read = Instant::now();
-                            
-                            
                             self.notified_idle = false;
 
                             buf.extend_from_slice(&tmp_buf[..n]);
@@ -89,21 +82,16 @@ impl ConnectionActor {
                     }
                 }
 
-
-
-                
                 _ = tick_interval.tick() => {
+                    if self.is_idle() && !self.notified_idle {
+                        self.notify_idle();
+                    } else if self.tcp_writer.last_write.elapsed() > KEEP_ALIVE_INTERVAL_MS {
+                         self.write_packet(AnyPacket::Framework(FrameworkMessage::KeepAlive)).await?;
+                    }
+
                     if self.last_read.elapsed() > CONNECTION_TIME_OUT_MS {
                         info!("Connection {} timed out", self.id);
                         break;
-                    }
-                    
-                    if self.is_idle() && !self.notified_idle {
-                        self.notify_idle();
-                    }
-
-                    if self.tcp_writer.last_write.elapsed() > KEEP_ALIVE_INTERVAL_MS {
-                         self.write_packet(AnyPacket::Framework(FrameworkMessage::KeepAlive)).await?;
                     }
                 }
             }
@@ -594,6 +582,7 @@ impl ConnectionActor {
                 .await?;
             }
             ConnectionAction::ProcessPacket(packet, is_tcp) => {
+                self.notified_idle = false;
                 self.handle_packet(packet, is_tcp).await?;
             }
         }
