@@ -1,7 +1,7 @@
 use crate::constant::{ArcCloseReason, CloseReason, MessageType};
 use crate::packet::{
     AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionId, ConnectionPacketWrapPacket,
-    FrameworkMessage, Message2Packet, MessagePacket, RoomClosedPacket, RoomLinkPacket,
+    FrameworkMessage, Message2Packet, MessagePacket, PopupPacket, RoomClosedPacket, RoomLinkPacket,
 };
 use crate::rate::AtomicRateLimiter;
 use crate::state::{AppState, ConnectionAction, RoomInit, RoomUpdate};
@@ -125,6 +125,11 @@ impl ConnectionActor {
                     self.handle_packet(packet, true).await?;
                 }
                 Err(e) => {
+                    let packet = AnyPacket::App(AppPacket::Popup(PopupPacket {
+                        message: "Your version of MindustryTool is no longer supported. Please update to the latest version.".to_string(),
+                    }));
+
+                    self.write_packet(packet).await?;
                     error!("Error reading packet: {:?} from connection {}", e, self.id);
                     continue;
                 }
