@@ -18,7 +18,6 @@ use tracing::{error, info, warn};
 
 const TCP_BUFFER_SIZE: usize = 32768;
 const CONNECTION_TIME_OUT_MS: u64 = 30000;
-const IDLE_TIMEOUT_MS: u64 = 1000;
 const KEEP_ALIVE_INTERVAL_MS: u64 = 2000;
 const PACKET_LENGTH_LENGTH: usize = 2;
 const TICK_INTERVAL_SECS: u64 = 1;
@@ -50,66 +49,48 @@ impl ConnectionActor {
             let mut batch = BytesMut::new();
 
             tokio::select! {
-                // Channel Read
+                
                 action = self.rx.recv() => {
                     if let Some(action) = action {
-                        let start = Instant::now();
-                        // info!("Connection {} received action from channel: {:?}", self.id, action);
                         self.handle_action(action, &mut batch).await?;
 
                         while let Ok(action) = self.rx.try_recv() {
-                            // info!("Connection {} received extra action from channel: {:?}", self.id, action);
                             self.handle_action(action, &mut batch).await?;
                         }
-                        // Flush batch
+                        
                         if !batch.is_empty() {
-                            let batch_len = batch.len();
                             self.tcp_writer.write(&batch).await?;
-                            info!("Connection {} flushed {} bytes to TCP", self.id, batch_len);
-                        }
-                        let elapsed = start.elapsed();
-                        if elapsed > Duration::from_millis(100) {
-                            warn!("Connection {} channel batch processing took {:?}", self.id, elapsed);
                         }
                     } else {
-                        // Channel closed
-                        info!("Connection {} channel closed", self.id);
+                        
                         break;
                     }
                 }
 
-                // TCP Read
+                
                 read_result = reader.read(&mut tmp_buf) => {
                     match read_result {
-                        Ok(0) => break, // EOF
+                        Ok(0) => break, 
                         Ok(n) => {
                             self.last_read = Instant::now();
                             self.state.reset_idle(self.id);
 
-                            info!("Connection {} received {} bytes from TCP", self.id, n);
-
                             buf.extend_from_slice(&tmp_buf[..n]);
-
-                            let start = Instant::now();
                             self.process_tcp_buffer(&mut buf).await?;
-                            let elapsed = start.elapsed();
-                            if elapsed > Duration::from_millis(100) {
-                                warn!("Connection {} process_tcp_buffer took {:?}", self.id, elapsed);
-                            }
                         }
                         Err(e) => return Err(e.into()),
                     }
                 }
 
 
-                // Tick
+                
                 _ = tick_interval.tick() => {
                     if self.last_read.elapsed() > Duration::from_millis(CONNECTION_TIME_OUT_MS) {
                         info!("Connection {} timed out", self.id);
                         break;
                     }
 
-                    if self.last_read.elapsed() > Duration::from_millis(IDLE_TIMEOUT_MS) {
+                    if self.is_idle() {
                         self.state.idle(self.id);
                     }
 
@@ -152,7 +133,7 @@ impl ConnectionActor {
                     continue;
                 }
             }
-            // Handle packet
+            
         }
         Ok(())
     }
@@ -244,11 +225,11 @@ impl ConnectionActor {
                 }
             }
             FrameworkMessage::KeepAlive => {
-                // Handled by activity update
+                
             }
             FrameworkMessage::RegisterUDP { .. } => {
-                // Should not happen via TCP?
-                // But if it does, ignore?
+                
+                
             }
             _ => {
                 warn!("Unhandled Framework Packet: {:?}", packet);
@@ -571,11 +552,11 @@ impl ConnectionActor {
         action: ConnectionAction,
         batch: &mut BytesMut,
     ) -> anyhow::Result<()> {
-        // info!("Connection {} handling action: {:?}", self.id, action);
+        
         match action {
             ConnectionAction::SendTCP(p) => {
                 if let AnyPacket::App(AppPacket::ConnectionPacketWrap(_)) = &p {
-                    // Reduce noise for data packets
+                    
                 } else {
                     info!("Connection {} sending TCP packet: {:?}", self.id, p);
                 }
@@ -589,7 +570,7 @@ impl ConnectionActor {
                 self.udp_writer.send_raw(&b).await?;
             }
             ConnectionAction::Close => {
-                // Return error to break loop
+                
                 return Err(anyhow::anyhow!("Closed"));
             }
             ConnectionAction::RegisterUDP(addr) => {
@@ -601,7 +582,7 @@ impl ConnectionActor {
 
                 info!("New connection {} from {}", self.id, addr);
 
-                // Register in state
+                
                 if let Some(sender) = self.state.get_sender(self.id) {
                     self.state.register_udp(addr, sender, self.limiter.clone());
                 } else {
@@ -610,7 +591,7 @@ impl ConnectionActor {
                         self.id
                     ));
                 }
-                // Send reply
+                
                 self.write_packet(AnyPacket::Framework(FrameworkMessage::RegisterUDP {
                     connection_id: self.id,
                 }))
@@ -634,16 +615,12 @@ impl ConnectionActor {
     }
 
     async fn write_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {
-        let start = Instant::now();
-        let res = self
-            .tcp_writer
+        self.tcp_writer
             .write(&ConnectionActor::prepend_len(packet.to_bytes().freeze()))
-            .await;
+            .await
+    }
 
-        let elapsed = start.elapsed();
-        if elapsed > Duration::from_millis(100) {
-            warn!("Connection {} write_packet took {:?}", self.id, elapsed);
-        }
-        res
+    fn is_idle(&self) -> bool {
+        self.packet_queue.is_empty()
     }
 }
