@@ -308,7 +308,6 @@ impl Rooms {
             .map(|(_, room)| room)
         {
             if room.host_connection_id == connection_id {
-                info!("Host {} is idle", connection_id);
                 return true;
             }
 

@@ -549,9 +549,11 @@ impl ConnectionActor {
                 batch.extend_from_slice(&ConnectionActor::prepend_len(bytes.freeze()));
             }
             ConnectionAction::SendTCPRaw(b) => {
+                self.notified_idle = false;
                 batch.extend_from_slice(&ConnectionActor::prepend_len(b));
             }
             ConnectionAction::SendUDPRaw(b) => {
+                self.notified_idle = false;
                 self.udp_writer.send_raw(&b).await?;
             }
             ConnectionAction::Close => {
