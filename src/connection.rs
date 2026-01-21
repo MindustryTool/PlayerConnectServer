@@ -610,8 +610,10 @@ impl ConnectionActor {
     }
 
     fn notify_idle(&mut self) {
+        info!("Connection {} is idle", self.id);
         if self.state.idle(self.id) {
             self.notified_idle = true;
+            info!("Notify Connection {} is idle success", self.id);
         }
     }
 }
