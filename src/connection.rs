@@ -571,8 +571,14 @@ impl ConnectionActor {
         action: ConnectionAction,
         batch: &mut BytesMut,
     ) -> anyhow::Result<()> {
+        // info!("Connection {} handling action: {:?}", self.id, action);
         match action {
             ConnectionAction::SendTCP(p) => {
+                if let AnyPacket::App(AppPacket::ConnectionPacketWrap(_)) = &p {
+                    // Reduce noise for data packets
+                } else {
+                    info!("Connection {} sending TCP packet: {:?}", self.id, p);
+                }
                 let bytes = p.to_bytes();
                 batch.extend_from_slice(&ConnectionActor::prepend_len(bytes.freeze()));
             }

@@ -226,6 +226,7 @@ impl Rooms {
         if let Ok(rooms) = self.rooms.read() {
             if let Some(room) = rooms.get(room_id) {
                 // info!("Broadcasting to room {} (members: {})", room_id, room.members.len());
+                // info!("Broadcasting action: {:?}", action);
                 let start = std::time::Instant::now();
                 let mut count = 0;
                 for (id, sender) in &room.members {
@@ -240,7 +241,10 @@ impl Rooms {
                 }
                 let elapsed = start.elapsed();
                 if elapsed > std::time::Duration::from_millis(10) {
-                     info!("Broadcast to {} members in room {} took {:?}", count, room_id, elapsed);
+                    info!(
+                        "Broadcast to {} members in room {} took {:?}",
+                        count, room_id, elapsed
+                    );
                 }
             }
         }
