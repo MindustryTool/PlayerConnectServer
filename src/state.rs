@@ -293,28 +293,26 @@ impl Rooms {
         }
     }
 
-    pub fn idle(&self, room_id: &RoomId, connection_id: ConnectionId) -> bool {
+    pub fn idle(&self, connection_id: ConnectionId) -> bool {
         let rooms = match self.rooms.read() {
             Ok(rooms) => rooms,
             Err(_) => return true,
         };
 
-        if let Some(room) = rooms.get(room_id) {
-            // Don't process host idle
+        if let Some(room) = rooms
+            .iter()
+            .find(|(_, room)| room.members.contains_key(&connection_id))
+            .map(|(_, room)| room)
+        {
             if room.host_connection_id == connection_id {
                 return true;
             }
 
-            // Check if client is in room
-            if !room.members.contains_key(&connection_id) {
-                return true;
-            }
-
-            // Send to host
             if let Some(sender) = room.members.get(&room.host_connection_id) {
                 let packet = AnyPacket::App(AppPacket::ConnectionIdling(ConnectionIdlingPacket {
                     connection_id,
                 }));
+
                 match sender.try_send(ConnectionAction::SendTCP(packet)) {
                     Ok(_) => return true,
                     Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
@@ -435,20 +433,7 @@ impl AppState {
     }
 
     pub fn idle(&self, connection_id: ConnectionId) -> bool {
-        // Only process valid connections
-        if let Ok(conns) = self.connections.read() {
-            if !conns.contains_key(&connection_id) {
-                return true;
-            }
-        } else {
-            return true;
-        }
-        // Find room and notify host
-        if let Some(room_id) = self.rooms.find_connection_room_id(connection_id) {
-            self.rooms.idle(&room_id, connection_id)
-        } else {
-            true
-        }
+        self.rooms.idle(connection_id)
     }
 
     pub fn remove_connection(&self, connection_id: ConnectionId) {
