@@ -136,8 +136,6 @@ impl ConnectionActor {
     async fn handle_packet(&mut self, packet: AnyPacket, is_tcp: bool) -> anyhow::Result<()> {
         let is_framework = matches!(packet, AnyPacket::Framework(_));
 
-        info!("Received packet: {:?}", packet);
-
         if !is_framework {
             let room_id_opt = self.state.rooms.find_connection_room_id(self.id);
             let is_host = if let Some(ref room_id) = room_id_opt {
@@ -544,7 +542,6 @@ impl ConnectionActor {
     ) -> anyhow::Result<()> {
         match action {
             ConnectionAction::SendTCP(p) => {
-                info!("Connection {} sending TCP packet: {:?}", self.id, p);
                 let bytes = p.to_bytes();
                 batch.extend_from_slice(&ConnectionActor::prepend_len(bytes.freeze()));
             }
@@ -612,10 +609,8 @@ impl ConnectionActor {
     }
 
     fn notify_idle(&mut self) {
-        info!("Connection {} is idle", self.id);
         if self.state.idle(self.id) {
             self.notified_idle = true;
-            info!("Notify Connection {} is idle success", self.id);
         }
     }
 }
