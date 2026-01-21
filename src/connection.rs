@@ -125,7 +125,7 @@ impl ConnectionActor {
                     self.handle_packet(packet, true).await?;
                 }
                 Err(e) => {
-                    error!("Error reading packet: {:?}", e);
+                    error!("Error reading packet: {:?} from connection {}", e, self.id);
                     continue;
                 }
             }
