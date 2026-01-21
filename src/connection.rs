@@ -558,6 +558,8 @@ impl ConnectionActor {
                 return Err(anyhow::anyhow!("Closed"));
             }
             ConnectionAction::RegisterUDP(addr) => {
+                self.notified_idle = false;
+
                 if self.udp_writer.addr.is_some() {
                     return Ok(());
                 }
@@ -608,7 +610,8 @@ impl ConnectionActor {
     }
 
     fn notify_idle(&mut self) {
-        self.state.idle(self.id);
-        self.notified_idle = true;
+        if self.state.idle(self.id) {
+            self.notified_idle = true;
+        }
     }
 }

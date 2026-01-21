@@ -293,21 +293,21 @@ impl Rooms {
         }
     }
 
-    pub fn idle(&self, room_id: &RoomId, connection_id: ConnectionId) {
+    pub fn idle(&self, room_id: &RoomId, connection_id: ConnectionId) -> bool {
         let rooms = match self.rooms.read() {
             Ok(rooms) => rooms,
-            Err(_) => return,
+            Err(_) => return true,
         };
 
         if let Some(room) = rooms.get(room_id) {
             // Don't process host idle
             if room.host_connection_id == connection_id {
-                return;
+                return true;
             }
 
             // Check if client is in room
             if !room.members.contains_key(&connection_id) {
-                return;
+                return true;
             }
 
             // Send to host
@@ -315,14 +315,23 @@ impl Rooms {
                 let packet = AnyPacket::App(AppPacket::ConnectionIdling(ConnectionIdlingPacket {
                     connection_id,
                 }));
-                if let Err(e) = sender.try_send(ConnectionAction::SendTCP(packet)) {
-                    warn!(
-                        "Failed to forward idle packet to host {}: {}",
-                        room.host_connection_id, e
-                    );
+                match sender.try_send(ConnectionAction::SendTCP(packet)) {
+                    Ok(_) => return true,
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        warn!("Host channel full, retrying idle packet later");
+                        return false;
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to forward idle packet to host {}: {}",
+                            room.host_connection_id, e
+                        );
+                        return true;
+                    }
                 }
             }
         }
+        true
     }
 }
 
@@ -425,18 +434,20 @@ impl AppState {
         self.udp_routes.read().ok()?.get(addr).cloned()
     }
 
-    pub fn idle(&self, connection_id: ConnectionId) {
+    pub fn idle(&self, connection_id: ConnectionId) -> bool {
         // Only process valid connections
         if let Ok(conns) = self.connections.read() {
             if !conns.contains_key(&connection_id) {
-                return;
+                return true;
             }
         } else {
-            return;
+            return true;
         }
         // Find room and notify host
         if let Some(room_id) = self.rooms.find_connection_room_id(connection_id) {
-            self.rooms.idle(&room_id, connection_id);
+            self.rooms.idle(&room_id, connection_id)
+        } else {
+            true
         }
     }
 

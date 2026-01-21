@@ -45,6 +45,7 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
 
                     match AnyPacket::read(&mut cursor) {
                         Ok(packet) => {
+
                             if let AnyPacket::Framework(FrameworkMessage::RegisterUDP {
                                 connection_id,
                             }) = packet
