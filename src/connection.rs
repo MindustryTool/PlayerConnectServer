@@ -17,10 +17,10 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 const TCP_BUFFER_SIZE: usize = 32768;
-const CONNECTION_TIME_OUT_MS: u64 = 30000;
-const KEEP_ALIVE_INTERVAL_MS: u64 = 2000;
+const CONNECTION_TIME_OUT_MS: Duration = Duration::from_millis(30000);
+const KEEP_ALIVE_INTERVAL_MS: Duration = Duration::from_millis(5000);
 const PACKET_LENGTH_LENGTH: usize = 2;
-const TICK_INTERVAL_SECS: u64 = 1;
+const TICK_INTERVAL_MS: u64 = 1000 / 120;
 
 pub struct ConnectionActor {
     pub id: ConnectionId,
@@ -47,7 +47,7 @@ impl ConnectionActor {
 
         let mut buf = BytesMut::with_capacity(TCP_BUFFER_SIZE);
         let mut tmp_buf = [0u8; TCP_BUFFER_SIZE];
-        let mut tick_interval = tokio::time::interval(Duration::from_secs(TICK_INTERVAL_SECS));
+        let mut tick_interval = tokio::time::interval(Duration::from_millis(TICK_INTERVAL_MS));
 
         loop {
             let mut batch = BytesMut::new();
@@ -93,18 +93,16 @@ impl ConnectionActor {
 
                 
                 _ = tick_interval.tick() => {
-                    if self.last_read.elapsed() > Duration::from_millis(CONNECTION_TIME_OUT_MS) {
+                    if self.last_read.elapsed() > CONNECTION_TIME_OUT_MS {
                         info!("Connection {} timed out", self.id);
                         break;
                     }
-
-                    
                     
                     if self.is_idle() && !self.notified_idle {
                         self.notify_idle();
                     }
 
-                    if self.tcp_writer.last_write.elapsed() > Duration::from_millis(KEEP_ALIVE_INTERVAL_MS) {
+                    if self.tcp_writer.last_write.elapsed() > KEEP_ALIVE_INTERVAL_MS {
                          self.write_packet(AnyPacket::Framework(FrameworkMessage::KeepAlive)).await?;
                     }
                 }
