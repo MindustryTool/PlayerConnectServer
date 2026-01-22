@@ -233,8 +233,6 @@ impl AppPacket {
     pub fn read(buf: &mut Cursor<Bytes>) -> Result<Self, AppError> {
         let pid = buf.get_u8();
 
-        info!("Read AppPacket with ID: {}", pid);
-
         match pid {
             0 => {
                 let connection_id = ConnectionId(buf.get_u32());
