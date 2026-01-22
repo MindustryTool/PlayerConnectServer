@@ -52,6 +52,20 @@ impl ConnectionActor {
             let mut batch = BytesMut::new();
 
             tokio::select! {
+                read_result = reader.read(&mut tmp_buf) => {
+                    match read_result {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            self.last_read = Instant::now();
+                            self.notified_idle = false;
+
+                            buf.extend_from_slice(&tmp_buf[..n]);
+                            self.process_tcp_buffer(&mut buf).await?;
+                        }
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+                
                 action = self.rx.recv() => {
                     if let Some(action) = action {
                         self.handle_action(action, &mut batch).await?;
@@ -65,20 +79,6 @@ impl ConnectionActor {
                         }
                     } else {
                         break;
-                    }
-                }
-
-                read_result = reader.read(&mut tmp_buf) => {
-                    match read_result {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            self.last_read = Instant::now();
-                            self.notified_idle = false;
-
-                            buf.extend_from_slice(&tmp_buf[..n]);
-                            self.process_tcp_buffer(&mut buf).await?;
-                        }
-                        Err(e) => return Err(e.into()),
                     }
                 }
 
