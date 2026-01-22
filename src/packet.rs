@@ -2,6 +2,7 @@ use crate::constant::{ArcCloseReason, CloseReason, MessageType};
 use crate::error::AppError;
 use crate::models::Stats;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use tracing::info;
 use std::convert::TryFrom;
 use std::io::Cursor;
 
@@ -137,7 +138,7 @@ impl AnyPacket {
 
         let id = buf.get_i8();
 
-        match id {
+        let result = match id {
             FRAMEWORK_PACKET_ID => Ok(AnyPacket::Framework(FrameworkMessage::read(buf)?)),
             APP_PACKET_ID => Ok(AnyPacket::App(AppPacket::read(buf)?)),
             _ => {
@@ -151,7 +152,16 @@ impl AnyPacket {
 
                 Ok(AnyPacket::Raw(bytes))
             }
+        };
+
+        if buf.has_remaining() {
+            return Err(AppError::PacketParsing(format!(
+                "Extra data ({} bytes) after packet",
+                buf.remaining()
+            )));
         }
+
+        result
     }
 
     pub fn to_bytes(&self) -> BytesMut {
@@ -222,6 +232,8 @@ impl FrameworkMessage {
 impl AppPacket {
     pub fn read(buf: &mut Cursor<Bytes>) -> Result<Self, AppError> {
         let pid = buf.get_u8();
+
+        info!("Read AppPacket with ID: {}", pid);
 
         match pid {
             0 => {

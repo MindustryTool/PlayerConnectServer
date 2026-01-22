@@ -85,9 +85,7 @@ impl ConnectionActor {
                 _ = tick_interval.tick() => {
                     if self.is_idle() && !self.notified_idle {
                         self.notify_idle();
-                    }
-
-                    if self.tcp_writer.last_write.elapsed() > KEEP_ALIVE_INTERVAL_MS {
+                    } else if self.tcp_writer.last_write.elapsed() > KEEP_ALIVE_INTERVAL_MS {
                          self.write_packet(AnyPacket::Framework(FrameworkMessage::KeepAlive)).await?;
                     }
 
