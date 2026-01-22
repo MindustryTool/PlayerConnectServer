@@ -54,7 +54,7 @@ impl ConnectionActor {
             tokio::select! {
                 read_result = reader.read(&mut tmp_buf) => {
                     match read_result {
-                        Ok(0) => break,
+                        Ok(0) => return Err(anyhow::anyhow!("Connection closed by peer")),
                         Ok(n) => {
                             self.last_read = Instant::now();
                             self.notified_idle = false;
@@ -78,7 +78,7 @@ impl ConnectionActor {
                             self.tcp_writer.write(&batch).await?;
                         }
                     } else {
-                        break;
+                        return Err(anyhow::anyhow!("Connection closed by peer, no action"));
                     }
                 }
 
