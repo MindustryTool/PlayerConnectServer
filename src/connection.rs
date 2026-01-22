@@ -18,9 +18,9 @@ use tracing::{error, info, warn};
 
 const TCP_BUFFER_SIZE: usize = 32768;
 const CONNECTION_TIME_OUT_MS: Duration = Duration::from_millis(30000);
-const KEEP_ALIVE_INTERVAL_MS: Duration = Duration::from_millis(5000);
+const KEEP_ALIVE_INTERVAL_MS: Duration = Duration::from_millis(3000);
 const PACKET_LENGTH_LENGTH: usize = 2;
-const TICK_INTERVAL_MS: u64 = 1000 / 30;
+const TICK_INTERVAL_MS: u64 = 1000 / 60;
 
 pub struct ConnectionActor {
     pub id: ConnectionId,
@@ -65,7 +65,7 @@ impl ConnectionActor {
                         Err(e) => return Err(e.into()),
                     }
                 }
-                
+
                 action = self.rx.recv() => {
                     if let Some(action) = action {
                         self.handle_action(action, &mut batch).await?;
@@ -125,12 +125,13 @@ impl ConnectionActor {
                     self.handle_packet(packet, true).await?;
                 }
                 Err(e) => {
+                    error!("Error reading packet: {:?} from connection {}", e, self.id);
+
                     let packet = AnyPacket::App(AppPacket::Popup(PopupPacket {
                         message: "Your version of MindustryTool is no longer supported. Please update to the latest version.".to_string(),
                     }));
 
                     self.write_packet(packet).await?;
-                    error!("Error reading packet: {:?} from connection {}", e, self.id);
                     continue;
                 }
             }
@@ -321,6 +322,11 @@ impl ConnectionActor {
                         "Connection {} tried to join a non-existent room {}.",
                         self.id, p.room_id
                     );
+                    self.write_packet(AnyPacket::App(AppPacket::Popup(PopupPacket {
+                        message: "Room not found".to_string(),
+                    })))
+                    .await?;
+
                     self.write_packet(AnyPacket::App(AppPacket::ConnectionClosed(
                         ConnectionClosedPacket {
                             connection_id: self.id,
