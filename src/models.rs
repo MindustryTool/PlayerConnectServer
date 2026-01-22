@@ -38,6 +38,8 @@ pub struct RoomView {
     #[serde(rename = "createdAt")]
     pub created_at: u128,
     pub ping: u128,
+    #[serde(rename = "protocolVersion")]
+    pub protocol_version: String,
 }
 
 #[derive(Clone, Debug, Serialize)]

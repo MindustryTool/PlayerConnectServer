@@ -366,6 +366,7 @@ impl ConnectionActor {
                         connection_id: self.id,
                         password: p.password,
                         stats: p.data,
+                        protocol_version: p.version,
                         sender,
                     });
                     self.write_packet(AnyPacket::App(AppPacket::RoomLink(RoomLinkPacket {

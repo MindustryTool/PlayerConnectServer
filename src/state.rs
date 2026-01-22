@@ -36,6 +36,7 @@ pub struct Room {
     pub members: HashMap<ConnectionId, mpsc::Sender<ConnectionAction>>,
     pub stats: Stats,
     pub ping: u128,
+    pub protocol_version: String,
 }
 
 #[derive(Clone, Debug)]
@@ -56,6 +57,7 @@ pub struct RoomInit {
     pub password: String,
     pub stats: Stats,
     pub sender: mpsc::Sender<ConnectionAction>,
+    pub protocol_version: String,
 }
 
 impl Rooms {
@@ -165,6 +167,7 @@ impl Rooms {
             connection_id,
             stats,
             sender,
+            protocol_version,
         } = init;
 
         let password = if password.is_empty() {
@@ -186,6 +189,7 @@ impl Rooms {
             members,
             created_at: current_time_millis(),
             updated_at: current_time_millis(),
+            protocol_version,
             ping: 0,
         };
 
@@ -351,6 +355,7 @@ impl From<&Room> for RoomView {
             version: room.stats.version.clone(),
             created_at: room.stats.created_at,
             ping: room.ping,
+            protocol_version: room.protocol_version.clone(),
         }
     }
 }
