@@ -38,24 +38,18 @@ async fn ping() -> impl IntoResponse {
 }
 
 async fn rooms_sse(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let rx = state.rooms.broadcast_sender.subscribe();
+    let rx = state.room_state.broadcast_sender.subscribe();
     let stream = BroadcastStream::new(rx);
 
-    let initial_rooms: Vec<RoomUpdateEvent> = {
-        let rooms = state.rooms.read();
-
-        if let Some(rooms) = rooms {
-            rooms
-                .iter()
-                .map(|(key, room)| RoomUpdateEvent {
-                    room_id: key.0.clone(),
-                    data: RoomView::from(room),
-                })
-                .collect()
-        } else {
-            vec![]
-        }
-    };
+    let initial_rooms: Vec<RoomUpdateEvent> = state
+        .room_state
+        .rooms
+        .iter()
+        .map(|entry| RoomUpdateEvent {
+            room_id: entry.key().0.clone(),
+            data: RoomView::from(entry.value()),
+        })
+        .collect();
 
     let init_stream = once(async move {
         Event::default()
@@ -101,13 +95,11 @@ async fn room_page(
     Path(room_id): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let stats = {
-        if let Some(rooms) = state.rooms.read() {
-            rooms.get(&RoomId(room_id)).map(|r| r.stats.clone())
-        } else {
-            None
-        }
-    };
+    let stats = state
+        .room_state
+        .rooms
+        .get(&RoomId(room_id))
+        .map(|r| r.stats.clone());
 
     if let Some(stats) = stats {
         let html = format!(

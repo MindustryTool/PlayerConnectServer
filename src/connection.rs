@@ -8,8 +8,8 @@ use crate::state::{AppState, ConnectionAction, RoomInit, RoomUpdate};
 use crate::utils::current_time_millis;
 use crate::writer::{TcpWriter, UdpWriter};
 use anyhow::anyhow;
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use std::io::Cursor;
+use bytes::{Buf, Bytes, BytesMut};
+use std::io::{Cursor, IoSlice};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
@@ -45,21 +45,20 @@ impl ConnectionActor {
         self.notify_idle();
 
         let mut buf = BytesMut::with_capacity(TCP_BUFFER_SIZE);
-        let mut tmp_buf = [0u8; TCP_BUFFER_SIZE];
         let mut tick_interval = tokio::time::interval(Duration::from_millis(TICK_INTERVAL_MS));
 
         loop {
-            let mut batch = BytesMut::new();
+            let mut headers: Vec<[u8; 2]> = Vec::with_capacity(16);
+            let mut payloads: Vec<Bytes> = Vec::with_capacity(16);
 
             tokio::select! {
-                read_result = reader.read(&mut tmp_buf) => {
+                read_result = reader.read_buf(&mut buf) => {
                     match read_result {
                         Ok(0) => return Err(anyhow::anyhow!("Connection closed by peer")),
-                        Ok(n) => {
+                        Ok(_n) => {
                             self.last_read = Instant::now();
                             self.notified_idle = false;
 
-                            buf.extend_from_slice(&tmp_buf[..n]);
                             self.process_tcp_buffer(&mut buf).await?;
                         }
                         Err(e) => return Err(e.into()),
@@ -68,14 +67,19 @@ impl ConnectionActor {
 
                 action = self.rx.recv() => {
                     if let Some(action) = action {
-                        self.handle_action(action, &mut batch).await?;
+                        self.handle_action(action, &mut headers, &mut payloads).await?;
 
                         while let Ok(action) = self.rx.try_recv() {
-                            self.handle_action(action, &mut batch).await?;
+                            self.handle_action(action, &mut headers, &mut payloads).await?;
                         }
 
-                        if !batch.is_empty() {
-                            self.tcp_writer.write(&batch).await?;
+                        if !payloads.is_empty() {
+                            let mut slices = Vec::with_capacity(headers.len() * 2);
+                            for (header, payload) in headers.iter().zip(payloads.iter()) {
+                                slices.push(IoSlice::new(header));
+                                slices.push(IoSlice::new(payload));
+                            }
+                            self.tcp_writer.write_vectored(&slices).await?;
                         }
                     } else {
                         return Err(anyhow::anyhow!("Connection closed by peer, no action"));
@@ -111,6 +115,12 @@ impl ConnectionActor {
                 cur.get_u16() as usize
             };
 
+            // Move rate limit check before parsing
+            if !self.limiter.check() {
+                warn!("Connection {} rate limit exceeded", self.id);
+                return Err(anyhow::anyhow!("Rate limit exceeded"));
+            }
+
             if buf.len() < PACKET_LENGTH_LENGTH + len {
                 break;
             }
@@ -143,23 +153,21 @@ impl ConnectionActor {
         let is_framework = matches!(packet, AnyPacket::Framework(_));
 
         if !is_framework {
-            let room_id_opt = self.state.rooms.find_connection_room_id(self.id);
+            let room_id_opt = self.state.room_state.find_connection_room_id(self.id);
             let is_host = if let Some(ref room_id) = room_id_opt {
-                if let Some(rooms) = self.state.rooms.read() {
-                    rooms
-                        .get(room_id)
-                        .map(|r| r.host_connection_id == self.id)
-                        .unwrap_or(false)
-                } else {
-                    false
-                }
+                self.state
+                    .room_state
+                    .rooms
+                    .get(room_id)
+                    .map(|r| r.host_connection_id == self.id)
+                    .unwrap_or(false)
             } else {
                 false
             };
 
             if !is_host && !self.limiter.check() {
                 if let Some(ref room_id) = room_id_opt {
-                    self.state.rooms.broadcast(
+                    self.state.room_state.broadcast(
                         room_id,
                         ConnectionAction::SendTCP(AnyPacket::App(AppPacket::Message2(
                             Message2Packet {
@@ -187,7 +195,7 @@ impl ConnectionActor {
             AnyPacket::Framework(f) => self.handle_framework(f).await?,
             AnyPacket::App(a) => self.handle_app(a).await?,
             AnyPacket::Raw(bytes) => {
-                if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
+                if let Some(room_id) = self.state.room_state.find_connection_room_id(self.id) {
                     let packet = AnyPacket::App(AppPacket::ConnectionPacketWrap(
                         ConnectionPacketWrapPacket {
                             connection_id: self.id,
@@ -197,7 +205,7 @@ impl ConnectionActor {
                     ));
 
                     self.state
-                        .rooms
+                        .room_state
                         .forward_to_host(&room_id, ConnectionAction::SendTCP(packet));
                 } else {
                     if self.packet_queue.len() < 16 {
@@ -237,37 +245,39 @@ impl ConnectionActor {
     async fn handle_app(&mut self, packet: AppPacket) -> anyhow::Result<()> {
         match packet {
             AppPacket::Stats(p) => {
-                if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
-                    if let Ok(mut rooms) = self.state.rooms.rooms.write() {
-                        if let Some(room) = rooms.get_mut(&room_id) {
-                            let sent_at = p.data.created_at;
+                if let Some(room_id) = self.state.room_state.find_connection_room_id(self.id) {
+                    if let Some(mut room) = self.state.room_state.rooms.get_mut(&room_id) {
+                        let sent_at = p.data.created_at;
 
-                            room.stats = p.data;
-                            room.updated_at = current_time_millis();
-                            room.ping = current_time_millis() - sent_at;
+                        room.stats = p.data;
+                        room.updated_at = current_time_millis();
+                        room.ping = current_time_millis() - sent_at;
 
-                            if let Err(err) =
-                                self.state.rooms.broadcast_sender.send(RoomUpdate::Update {
+                        if let Err(err) =
+                            self.state
+                                .room_state
+                                .broadcast_sender
+                                .send(RoomUpdate::Update {
                                     id: room.id.clone(),
                                     data: room.clone(),
                                 })
-                            {
-                                warn!("Fail to broadcast room update {}", err);
-                            }
+                        {
+                            warn!("Fail to broadcast room update {}", err);
                         }
                     }
                 }
             }
             AppPacket::RoomJoin(p) => {
-                if let Some(current_room_id) = self.state.rooms.find_connection_room_id(self.id) {
-                    let is_host = if let Some(rooms) = self.state.rooms.read() {
-                        rooms
-                            .get(&current_room_id)
-                            .map(|r| r.host_connection_id == self.id)
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    };
+                if let Some(current_room_id) =
+                    self.state.room_state.find_connection_room_id(self.id)
+                {
+                    let is_host = self
+                        .state
+                        .room_state
+                        .rooms
+                        .get(&current_room_id)
+                        .map(|r| r.host_connection_id == self.id)
+                        .unwrap_or(false);
 
                     if is_host {
                         self.write_packet(AnyPacket::App(AppPacket::Message2(Message2Packet {
@@ -286,12 +296,11 @@ impl ConnectionActor {
                         "Connection {} left room {} to join {}",
                         self.id, current_room_id, p.room_id
                     );
-                    self.state.rooms.leave(self.id);
+                    self.state.room_state.leave(self.id);
                 }
 
                 let (can_join, wrong_password) = (|| {
-                    let rooms = self.state.rooms.read()?;
-                    let room = rooms.get(&p.room_id)?;
+                    let room = self.state.room_state.rooms.get(&p.room_id)?;
 
                     if let Some(ref pass) = room.password {
                         if pass != &p.password {
@@ -336,12 +345,12 @@ impl ConnectionActor {
                 }
 
                 if let Some(sender) = self.state.get_sender(self.id) {
-                    self.state.rooms.join(self.id, &p.room_id, sender)?;
+                    self.state.room_state.join(self.id, &p.room_id, sender)?;
 
                     info!("Connection {} joined the room {}.", self.id, p.room_id);
 
                     for bytes in self.packet_queue.drain(..) {
-                        self.state.rooms.forward_to_host(
+                        self.state.room_state.forward_to_host(
                             &p.room_id,
                             ConnectionAction::SendTCP(AnyPacket::App(
                                 AppPacket::ConnectionPacketWrap(ConnectionPacketWrapPacket {
@@ -355,7 +364,9 @@ impl ConnectionActor {
                 }
             }
             AppPacket::RoomCreationRequest(p) => {
-                if let Some(current_room_id) = self.state.rooms.find_connection_room_id(self.id) {
+                if let Some(current_room_id) =
+                    self.state.room_state.find_connection_room_id(self.id)
+                {
                     self.write_packet(AnyPacket::App(AppPacket::Message2(Message2Packet {
                         message: MessageType::AlreadyHosting,
                     })))
@@ -368,7 +379,7 @@ impl ConnectionActor {
                 }
 
                 if let Some(sender) = self.state.get_sender(self.id) {
-                    let room_id = self.state.rooms.create(RoomInit {
+                    let room_id = self.state.room_state.create(RoomInit {
                         connection_id: self.id,
                         password: p.password,
                         stats: p.data,
@@ -380,18 +391,19 @@ impl ConnectionActor {
                     })))
                     .await?;
 
-                    let Some(rooms) = self.state.rooms.read() else {
-                        return Err(anyhow!("Can not read rooms"));
-                    };
-
-                    let Some(room) = rooms.get(&room_id) else {
+                    let Some(room) = self.state.room_state.rooms.get(&room_id) else {
                         return Err(anyhow!("Can not find room {}", room_id));
                     };
 
-                    if let Err(err) = self.state.rooms.broadcast_sender.send(RoomUpdate::Update {
-                        id: room.id.clone(),
-                        data: room.clone(),
-                    }) {
+                    if let Err(err) =
+                        self.state
+                            .room_state
+                            .broadcast_sender
+                            .send(RoomUpdate::Update {
+                                id: room.id.clone(),
+                                data: room.clone(),
+                            })
+                    {
                         warn!("Fail to broadcast room update {}", err);
                     }
 
@@ -399,15 +411,14 @@ impl ConnectionActor {
                 }
             }
             AppPacket::RoomClosureRequest(_) => {
-                if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
-                    let is_host = if let Some(rooms) = self.state.rooms.read() {
-                        rooms
-                            .get(&room_id)
-                            .map(|r| r.host_connection_id == self.id)
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    };
+                if let Some(room_id) = self.state.room_state.find_connection_room_id(self.id) {
+                    let is_host = self
+                        .state
+                        .room_state
+                        .rooms
+                        .get(&room_id)
+                        .map(|r| r.host_connection_id == self.id)
+                        .unwrap_or(false);
 
                     if !is_host {
                         self.write_packet(AnyPacket::App(AppPacket::Message2(Message2Packet {
@@ -421,7 +432,7 @@ impl ConnectionActor {
                         return Ok(());
                     }
 
-                    let members = self.state.rooms.get_room_members(&room_id);
+                    let members = self.state.room_state.get_room_members(&room_id);
                     for (id, sender) in members {
                         if id != self.id {
                             if let Err(e) = sender.try_send(ConnectionAction::SendTCP(
@@ -437,7 +448,7 @@ impl ConnectionActor {
                         }
                     }
 
-                    self.state.rooms.close(&room_id);
+                    self.state.room_state.close(&room_id);
                     info!(
                         "Room {} closed by connection {} (the host).",
                         room_id, self.id
@@ -445,15 +456,14 @@ impl ConnectionActor {
                 }
             }
             AppPacket::ConnectionClosed(p) => {
-                if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
-                    let is_host = if let Some(rooms) = self.state.rooms.read() {
-                        rooms
-                            .get(&room_id)
-                            .map(|r| r.host_connection_id == self.id)
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    };
+                if let Some(room_id) = self.state.room_state.find_connection_room_id(self.id) {
+                    let is_host = self
+                        .state
+                        .room_state
+                        .rooms
+                        .get(&room_id)
+                        .map(|r| r.host_connection_id == self.id)
+                        .unwrap_or(false);
 
                     if !is_host {
                         self.write_packet(AnyPacket::App(AppPacket::Message2(Message2Packet {
@@ -465,7 +475,10 @@ impl ConnectionActor {
                     }
 
                     if let Some(sender) = self.state.get_sender(p.connection_id) {
-                        let target_room = self.state.rooms.find_connection_room_id(p.connection_id);
+                        let target_room = self
+                            .state
+                            .room_state
+                            .find_connection_room_id(p.connection_id);
                         if target_room.as_ref() == Some(&room_id) {
                             info!(
                                 "Connection {} (room {}) closed the connection {}.",
@@ -499,42 +512,43 @@ impl ConnectionActor {
                 is_tcp,
                 buffer,
             }) => {
-                if let Some(room_id) = self.state.rooms.find_connection_room_id(self.id) {
-                    if let Some(rooms) = self.state.rooms.read() {
-                        let is_owner = rooms
-                            .get(&room_id)
-                            .map(|r| r.host_connection_id == self.id)
-                            .unwrap_or(false);
+                if let Some(room_id) = self.state.room_state.find_connection_room_id(self.id) {
+                    let is_owner = self
+                        .state
+                        .room_state
+                        .rooms
+                        .get(&room_id)
+                        .map(|r| r.host_connection_id == self.id)
+                        .unwrap_or(false);
 
-                        if !is_owner {
-                            return Err(anyhow!("Not room owner"));
-                        }
+                    if !is_owner {
+                        return Err(anyhow!("Not room owner"));
+                    }
 
-                        let Some(sender) = self.state.get_sender(connection_id) else {
-                            warn!("Connection not found: {}", connection_id);
+                    let Some(sender) = self.state.get_sender(connection_id) else {
+                        warn!("Connection not found: {}", connection_id);
 
-                            self.state.rooms.forward_to_host(
-                                &room_id,
-                                ConnectionAction::SendTCP(AnyPacket::App(
-                                    AppPacket::ConnectionClosed(ConnectionClosedPacket {
-                                        connection_id,
-                                        reason: ArcCloseReason::Closed,
-                                    }),
-                                )),
-                            );
+                        self.state.room_state.forward_to_host(
+                            &room_id,
+                            ConnectionAction::SendTCP(AnyPacket::App(AppPacket::ConnectionClosed(
+                                ConnectionClosedPacket {
+                                    connection_id,
+                                    reason: ArcCloseReason::Closed,
+                                },
+                            ))),
+                        );
 
-                            return Ok(());
-                        };
+                        return Ok(());
+                    };
 
-                        let action = if is_tcp {
-                            ConnectionAction::SendTCPRaw(buffer)
-                        } else {
-                            ConnectionAction::SendUDPRaw(buffer)
-                        };
+                    let action = if is_tcp {
+                        ConnectionAction::SendTCPRaw(buffer)
+                    } else {
+                        ConnectionAction::SendUDPRaw(buffer)
+                    };
 
-                        if let Err(e) = sender.try_send(action) {
-                            warn!("Failed to forward packet to {}: {}", connection_id, e);
-                        }
+                    if let Err(e) = sender.try_send(action) {
+                        warn!("Failed to forward packet to {}: {}", connection_id, e);
                     }
                 } else {
                     warn!("No room found for connection {}", self.id);
@@ -550,16 +564,21 @@ impl ConnectionActor {
     async fn handle_action(
         &mut self,
         action: ConnectionAction,
-        batch: &mut BytesMut,
+        headers: &mut Vec<[u8; 2]>,
+        payloads: &mut Vec<Bytes>,
     ) -> anyhow::Result<()> {
         match action {
             ConnectionAction::SendTCP(p) => {
-                let bytes = p.to_bytes();
-                batch.extend_from_slice(&ConnectionActor::prepend_len(bytes.freeze()));
+                let bytes = p.to_bytes().freeze();
+                let len = bytes.len() as u16;
+                headers.push(len.to_be_bytes());
+                payloads.push(bytes);
             }
             ConnectionAction::SendTCPRaw(b) => {
                 self.notified_idle = false;
-                batch.extend_from_slice(&ConnectionActor::prepend_len(b));
+                let len = b.len() as u16;
+                headers.push(len.to_be_bytes());
+                payloads.push(b);
             }
             ConnectionAction::SendUDPRaw(b) => {
                 self.notified_idle = false;
@@ -601,19 +620,11 @@ impl ConnectionActor {
         Ok(())
     }
 
-    pub fn prepend_len(payload: Bytes) -> BytesMut {
-        let mut out: BytesMut = BytesMut::with_capacity(2 + payload.len());
-
-        out.put_u16(payload.len() as u16);
-        out.extend_from_slice(&payload);
-
-        out
-    }
-
     async fn write_packet(&mut self, packet: AnyPacket) -> anyhow::Result<()> {
-        self.tcp_writer
-            .write(&ConnectionActor::prepend_len(packet.to_bytes().freeze()))
-            .await
+        let bytes = packet.to_bytes().freeze();
+        let len = (bytes.len() as u16).to_be_bytes();
+        let slices = [IoSlice::new(&len), IoSlice::new(&bytes)];
+        self.tcp_writer.write_vectored(&slices).await
     }
 
     fn is_idle(&self) -> bool {

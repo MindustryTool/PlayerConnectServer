@@ -3,7 +3,7 @@ use crate::packet::{AnyPacket, FrameworkMessage};
 use crate::rate::AtomicRateLimiter;
 use crate::state::{AppState, ConnectionAction};
 use crate::writer::{TcpWriter, UdpWriter};
-use bytes::Bytes;
+use bytes::BytesMut;
 use std::io::Cursor;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -35,13 +35,30 @@ pub async fn run(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
 
 fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
     tokio::spawn(async move {
-        let mut buf = [0u8; UDP_BUFFER_SIZE];
+        let mut buf = BytesMut::with_capacity(UDP_BUFFER_SIZE);
 
         loop {
-            match socket.recv_from(&mut buf).await {
-                Ok((len, addr)) => {
-                    let data = &buf[..len];
-                    let mut cursor = Cursor::new(Bytes::copy_from_slice(data));
+            if buf.len() > 0 {
+                buf.clear();
+            }
+            // BytesMut logic: if we froze the previous buffer, clear() might not free memory if shared.
+            // But we need to ensure we have capacity.
+            if buf.capacity() < UDP_BUFFER_SIZE {
+                buf.reserve(UDP_BUFFER_SIZE);
+            }
+
+            match socket.recv_buf_from(&mut buf).await {
+                Ok((_len, addr)) => {
+                    // Check rate limit early
+                    if let Some((_, limiter)) = state.get_route(&addr) {
+                        if !limiter.check() {
+                            // Rate limit exceeded, drop packet
+                            continue;
+                        }
+                    }
+
+                    let bytes = buf.split().freeze();
+                    let mut cursor = Cursor::new(bytes);
 
                     match AnyPacket::read(&mut cursor) {
                         Ok(packet) => {

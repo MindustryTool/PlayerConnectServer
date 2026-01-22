@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use std::io::IoSlice;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -20,6 +21,12 @@ impl TcpWriter {
 
     pub async fn write(&mut self, data: &[u8]) -> anyhow::Result<()> {
         self.writer.write_all(data).await?;
+        self.last_write = Instant::now();
+        Ok(())
+    }
+
+    pub async fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> anyhow::Result<()> {
+        self.writer.write_vectored(bufs).await?;
         self.last_write = Instant::now();
         Ok(())
     }

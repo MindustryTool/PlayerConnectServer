@@ -9,9 +9,10 @@ use crate::packet::{
 use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;
 use bytes::Bytes;
+use dashmap::DashMap;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock, RwLockReadGuard};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -45,8 +46,9 @@ pub enum RoomUpdate {
     Remove(RoomId),
 }
 
-pub struct Rooms {
-    pub rooms: RwLock<HashMap<RoomId, Room>>,
+pub struct RoomState {
+    pub rooms: DashMap<RoomId, Room>,
+    pub connection_to_room: DashMap<ConnectionId, RoomId>,
     pub broadcast_sender: tokio::sync::broadcast::Sender<RoomUpdate>,
     // Keep a receiver to prevent the channel from closing when all clients disconnect
     pub _broadcast_receiver: tokio::sync::broadcast::Receiver<RoomUpdate>,
@@ -60,28 +62,23 @@ pub struct RoomInit {
     pub protocol_version: String,
 }
 
-impl Rooms {
+impl RoomState {
     pub fn get_sender(
         &self,
         room_id: &RoomId,
         connection_id: ConnectionId,
     ) -> Option<mpsc::Sender<ConnectionAction>> {
-        let rooms = self.rooms.read().ok()?;
-
-        rooms.get(room_id)?.members.get(&connection_id).cloned()
+        self.rooms
+            .get(room_id)?
+            .members
+            .get(&connection_id)
+            .cloned()
     }
 
     pub fn find_connection_room_id(&self, connection_id: ConnectionId) -> Option<RoomId> {
-        let rooms = self.rooms.read().ok()?;
-
-        rooms
-            .iter()
-            .find(|(_, room)| room.members.contains_key(&connection_id))
-            .map(|(id, _)| id.clone())
-    }
-
-    pub fn read(&self) -> Option<RwLockReadGuard<'_, HashMap<RoomId, Room>>> {
-        self.rooms.read().ok()
+        self.connection_to_room
+            .get(&connection_id)
+            .map(|r| r.clone())
     }
 
     pub fn join(
@@ -90,10 +87,10 @@ impl Rooms {
         room_id: &RoomId,
         sender: mpsc::Sender<ConnectionAction>,
     ) -> Result<(), AppError> {
-        let mut rooms = self.rooms.write().map_err(|_| AppError::LockPoison)?;
-
-        if let Some(room) = rooms.get_mut(room_id) {
+        if let Some(mut room) = self.rooms.get_mut(room_id) {
             room.members.insert(connection_id, sender);
+            self.connection_to_room
+                .insert(connection_id, room_id.clone());
 
             let sender = match room.members.get(&room.host_connection_id) {
                 Some(sender) => sender,
@@ -124,14 +121,9 @@ impl Rooms {
     }
 
     pub fn leave(&self, connection_id: ConnectionId) -> Option<RoomId> {
-        let mut rooms = self.rooms.write().ok()?;
+        let (_, room_id) = self.connection_to_room.remove(&connection_id)?;
 
-        let room_id = rooms
-            .iter()
-            .find(|(_, room)| room.members.contains_key(&connection_id))
-            .map(|(id, _)| id.clone())?;
-
-        if let Some(room) = rooms.get_mut(&room_id) {
+        if let Some(mut room) = self.rooms.get_mut(&room_id) {
             room.members.remove(&connection_id);
 
             let sender = match room.members.get(&room.host_connection_id) {
@@ -193,23 +185,22 @@ impl Rooms {
             ping: 0,
         };
 
-        if let Ok(mut rooms) = self.rooms.write() {
-            rooms.insert(room_id.clone(), room);
-        }
+        self.rooms.insert(room_id.clone(), room);
+        self.connection_to_room
+            .insert(connection_id, room_id.clone());
 
         room_id
     }
 
     pub fn close(&self, room_id: &RoomId) {
-        let removed = {
-            if let Ok(mut rooms) = self.rooms.write() {
-                rooms.remove(room_id)
-            } else {
-                None
-            }
-        };
+        let removed = self.rooms.remove(room_id);
 
-        if removed.is_some() {
+        if let Some((_, room)) = removed {
+            // Cleanup connection_to_room map
+            for conn_id in room.members.keys() {
+                self.connection_to_room.remove(conn_id);
+            }
+
             info!("Room closed {}", room_id);
 
             if let Err(err) = self
@@ -227,30 +218,20 @@ impl Rooms {
         action: ConnectionAction,
         exclude_id: Option<ConnectionId>,
     ) {
-        if let Ok(rooms) = self.rooms.read() {
-            if let Some(room) = rooms.get(room_id) {
-                for (id, sender) in &room.members {
-                    if Some(*id) == exclude_id {
-                        continue;
-                    }
-                    if let Err(e) = sender.try_send(action.clone()) {
-                        warn!("Failed to broadcast to {}: {}", id, e);
-                    }
+        if let Some(room) = self.rooms.get(room_id) {
+            for (id, sender) in &room.members {
+                if Some(*id) == exclude_id {
+                    continue;
+                }
+                if let Err(e) = sender.try_send(action.clone()) {
+                    warn!("Failed to broadcast to {}: {}", id, e);
                 }
             }
         }
     }
 
     pub fn forward_to_host(&self, room_id: &RoomId, action: ConnectionAction) {
-        let rooms = match self.rooms.read() {
-            Ok(rooms) => rooms,
-            Err(e) => {
-                error!("Failed to acquire rooms read lock: {}", e);
-                return;
-            }
-        };
-
-        let room = match rooms.get(room_id) {
+        let room = match self.rooms.get(room_id) {
             Some(room) => room,
             None => {
                 warn!("Room {} not found for forwarding", room_id);
@@ -281,15 +262,7 @@ impl Rooms {
         &self,
         room_id: &RoomId,
     ) -> Vec<(ConnectionId, mpsc::Sender<ConnectionAction>)> {
-        let rooms = match self.rooms.read() {
-            Ok(rooms) => rooms,
-            Err(e) => {
-                error!("Failed to acquire rooms read lock: {}", e);
-                return Vec::new();
-            }
-        };
-
-        if let Some(room) = rooms.get(room_id) {
+        if let Some(room) = self.rooms.get(room_id) {
             room.members.iter().map(|(k, v)| (*k, v.clone())).collect()
         } else {
             warn!("Room {} not found for getting members", room_id);
@@ -298,19 +271,12 @@ impl Rooms {
     }
 
     pub fn idle(&self, connection_id: ConnectionId) -> bool {
-        let rooms = match self.rooms.read() {
-            Ok(rooms) => rooms,
-            Err(err) => {
-                error!("Failed to acquire rooms read lock: {}", err);
-                return true;
-            }
+        let room_id = match self.connection_to_room.get(&connection_id) {
+            Some(id) => id.clone(),
+            None => return true,
         };
 
-        if let Some(room) = rooms
-            .iter()
-            .find(|(_, room)| room.members.contains_key(&connection_id))
-            .map(|(_, room)| room)
-        {
+        if let Some(room) = self.rooms.get(&room_id) {
             if room.host_connection_id == connection_id {
                 return true;
             }
@@ -362,11 +328,10 @@ impl From<&Room> for RoomView {
 
 pub struct AppState {
     pub config: Config,
-    pub rooms: Rooms,
+    pub room_state: RoomState,
     pub connections:
-        RwLock<HashMap<ConnectionId, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
-    pub udp_routes:
-        RwLock<HashMap<SocketAddr, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>>,
+        DashMap<ConnectionId, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>,
+    pub udp_routes: DashMap<SocketAddr, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>,
 }
 
 impl AppState {
@@ -374,13 +339,14 @@ impl AppState {
         let (tx, rx) = tokio::sync::broadcast::channel(1024);
         Self {
             config,
-            rooms: Rooms {
-                rooms: RwLock::new(HashMap::new()),
+            room_state: RoomState {
+                rooms: DashMap::new(),
+                connection_to_room: DashMap::new(),
                 broadcast_sender: tx,
                 _broadcast_receiver: rx,
             },
-            connections: RwLock::new(HashMap::new()),
-            udp_routes: RwLock::new(HashMap::new()),
+            connections: DashMap::new(),
+            udp_routes: DashMap::new(),
         }
     }
 
@@ -390,22 +356,11 @@ impl AppState {
         sender: mpsc::Sender<ConnectionAction>,
         limiter: Arc<AtomicRateLimiter>,
     ) {
-        match self.connections.write() {
-            Ok(mut conns) => {
-                conns.insert(id, (sender, limiter));
-            }
-            Err(err) => {
-                error!("{}", err)
-            }
-        }
+        self.connections.insert(id, (sender, limiter));
     }
 
     pub fn has_connection_id(&self, id: ConnectionId) -> bool {
-        self.connections
-            .read()
-            .ok()
-            .map(|conns| conns.contains_key(&id))
-            .unwrap_or(false)
+        self.connections.contains_key(&id)
     }
 
     pub fn register_udp(
@@ -414,52 +369,39 @@ impl AppState {
         sender: mpsc::Sender<ConnectionAction>,
         limiter: Arc<AtomicRateLimiter>,
     ) {
-        if let Ok(mut routes) = self.udp_routes.write() {
-            routes.insert(addr, (sender, limiter));
-        }
+        self.udp_routes.insert(addr, (sender, limiter));
     }
 
     pub fn remove_udp(&self, addr: SocketAddr) {
-        if let Ok(mut routes) = self.udp_routes.write() {
-            routes.remove(&addr);
-        }
+        self.udp_routes.remove(&addr);
     }
 
     pub fn get_sender(&self, id: ConnectionId) -> Option<mpsc::Sender<ConnectionAction>> {
-        self.connections
-            .read()
-            .ok()?
-            .get(&id)
-            .map(|(s, _)| s.clone())
+        self.connections.get(&id).map(|val| val.0.clone())
     }
 
     pub fn get_route(
         &self,
         addr: &SocketAddr,
     ) -> Option<(mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)> {
-        self.udp_routes.read().ok()?.get(addr).cloned()
+        self.udp_routes.get(addr).map(|val| val.clone())
     }
 
     pub fn idle(&self, connection_id: ConnectionId) -> bool {
-        self.rooms.idle(connection_id)
+        self.room_state.idle(connection_id)
     }
 
     pub fn remove_connection(&self, connection_id: ConnectionId) {
-        if let Ok(mut conns) = self.connections.write() {
-            conns.remove(&connection_id);
-        }
+        self.connections.remove(&connection_id);
+
         // Handle room logic
-        let room_id_opt = self.rooms.leave(connection_id);
+        let room_id_opt = self.room_state.leave(connection_id);
 
         if let Some(room_id) = room_id_opt {
             // Check if host
             let should_close = {
-                if let Ok(rooms) = self.rooms.rooms.read() {
-                    if let Some(room) = rooms.get(&room_id) {
-                        room.host_connection_id == connection_id
-                    } else {
-                        false
-                    }
+                if let Some(room) = self.room_state.rooms.get(&room_id) {
+                    room.host_connection_id == connection_id
                 } else {
                     false
                 }
@@ -468,12 +410,8 @@ impl AppState {
             if should_close {
                 // Close room and disconnect all members
                 let members = {
-                    if let Ok(rooms) = self.rooms.rooms.read() {
-                        if let Some(room) = rooms.get(&room_id) {
-                            room.members.values().cloned().collect::<Vec<_>>()
-                        } else {
-                            Vec::new()
-                        }
+                    if let Some(room) = self.room_state.rooms.get(&room_id) {
+                        room.members.values().cloned().collect::<Vec<_>>()
                     } else {
                         Vec::new()
                     }
@@ -485,7 +423,7 @@ impl AppState {
                     }
                 }
 
-                self.rooms.close(&room_id);
+                self.room_state.close(&room_id);
             }
         }
     }
