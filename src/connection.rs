@@ -141,6 +141,8 @@ impl ConnectionActor {
     async fn handle_packet(&mut self, packet: AnyPacket, is_tcp: bool) -> anyhow::Result<()> {
         let is_framework = matches!(packet, AnyPacket::Framework(_));
 
+        info!("Connection {} received packet: {:?}", self.id, packet);
+
         if !is_framework {
             let room_id_opt = self.state.rooms.find_connection_room_id(self.id);
             let is_host = if let Some(ref room_id) = room_id_opt {
@@ -550,14 +552,17 @@ impl ConnectionActor {
             ConnectionAction::SendTCP(p) => {
                 let bytes = p.to_bytes();
                 batch.extend_from_slice(&ConnectionActor::prepend_len(bytes.freeze()));
+                info!("Connection {} sent packet: {:?}", self.id, p);
             }
             ConnectionAction::SendTCPRaw(b) => {
                 self.notified_idle = false;
+                info!("Connection {} sent packet: {:?}", self.id, b);
                 batch.extend_from_slice(&ConnectionActor::prepend_len(b));
             }
             ConnectionAction::SendUDPRaw(b) => {
                 self.notified_idle = false;
                 self.udp_writer.send_raw(&b).await?;
+                info!("Connection {} sent packet: {:?}", self.id, b);
             }
             ConnectionAction::Close => {
                 return Err(anyhow::anyhow!("Closed"));
