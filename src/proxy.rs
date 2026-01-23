@@ -146,14 +146,13 @@ async fn accept_tcp_connection(
             };
 
             if let Err(e) = actor.run(reader).await {
-                error!("Connection {} error: {}", id, e);
+                info!("Connection {} closed: {}", id, e);
             }
 
             state.remove_connection(id, actor.room.as_ref().map(|r| r.room_id().clone()));
 
             if let Some(addr) = actor.udp_writer.addr {
                 state.remove_udp(addr);
-                info!("Connection {} closed", id);
             }
         });
     }

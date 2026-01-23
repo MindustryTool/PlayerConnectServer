@@ -113,13 +113,11 @@ impl ConnectionActor {
 
                     if self.last_read.elapsed() > CONNECTION_TIME_OUT_MS {
                         info!("Connection {} timed out", self.id);
-                        break;
+                        return Err(anyhow::anyhow!("Connection timed out"));
                     }
                 }
             }
         }
-
-        Ok(())
     }
 
     async fn process_tcp_buffer(&mut self, buf: &mut BytesMut) -> anyhow::Result<()> {
@@ -241,7 +239,7 @@ impl ConnectionActor {
                 }
             }
             FrameworkMessage::KeepAlive => {}
-            FrameworkMessage::RegisterUDP { .. } => {}
+            FrameworkMessage::RegisterUDP { .. } => panic!("This should be handled previous"),
             _ => {
                 warn!("Unhandled Framework Packet: {:?}", packet);
             }
@@ -578,17 +576,12 @@ impl ConnectionActor {
                 return Err(anyhow::anyhow!("Closed"));
             }
             ConnectionAction::RegisterUDP(addr) => {
-                self.notified_idle = false;
-
-                if self.udp_writer.addr.is_some() {
-                    return Ok(());
+                if let Some(addr) = self.udp_writer.addr {
+                    self.state.remove_udp(addr);
                 }
 
-                self.udp_writer.set_addr(addr);
-
-                info!("New connection {} from {}", self.id, addr);
-
                 if let Some(sender) = self.state.get_sender(self.id) {
+                    self.udp_writer.set_addr(addr);
                     self.state.register_udp(addr, sender, self.limiter.clone());
                 } else {
                     return Err(anyhow::anyhow!(
@@ -601,6 +594,10 @@ impl ConnectionActor {
                     connection_id: self.id,
                 }))
                 .await?;
+
+                self.notified_idle = false;
+
+                info!("New connection {} from {}", self.id, addr);
             }
             ConnectionAction::ProcessPacket(packet, is_tcp) => {
                 self.notified_idle = false;
