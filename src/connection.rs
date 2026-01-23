@@ -573,8 +573,8 @@ impl ConnectionActor {
                 return Err(anyhow::anyhow!("Closed"));
             }
             ConnectionAction::RegisterUDP(addr) => {
-                if let Some(addr) = self.udp_writer.addr {
-                    self.state.remove_udp(addr);
+                if self.udp_writer.addr.is_some() {
+                    return Ok(());
                 }
 
                 if let Some(sender) = self.state.get_sender(self.id) {

@@ -9,7 +9,7 @@ pub const APP_PACKET_ID: i8 = -4;
 pub const FRAMEWORK_PACKET_ID: i8 = -2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ConnectionId(pub u32);
+pub struct ConnectionId(pub i32);
 
 impl std::fmt::Display for ConnectionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -193,10 +193,10 @@ impl FrameworkMessage {
             1 => Ok(FrameworkMessage::DiscoverHost),
             2 => Ok(FrameworkMessage::KeepAlive),
             3 => Ok(FrameworkMessage::RegisterUDP {
-                connection_id: ConnectionId(buf.get_u32()),
+                connection_id: ConnectionId(buf.get_i32()),
             }),
             4 => Ok(FrameworkMessage::RegisterTCP {
-                connection_id: ConnectionId(buf.get_u32()),
+                connection_id: ConnectionId(buf.get_i32()),
             }),
             _ => Err(AppError::PacketParsing(format!(
                 "Unknown Framework ID: {}",
@@ -218,11 +218,11 @@ impl FrameworkMessage {
             FrameworkMessage::KeepAlive => buf.put_u8(2),
             FrameworkMessage::RegisterUDP { connection_id } => {
                 buf.put_u8(3);
-                buf.put_u32(connection_id.0);
+                buf.put_i32(connection_id.0);
             }
             FrameworkMessage::RegisterTCP { connection_id } => {
                 buf.put_u8(4);
-                buf.put_u32(connection_id.0);
+                buf.put_i32(connection_id.0);
             }
         }
     }
@@ -234,7 +234,7 @@ impl AppPacket {
 
         match pid {
             0 => {
-                let connection_id = ConnectionId(buf.get_u32());
+                let connection_id = ConnectionId(buf.get_i32());
                 let is_tcp = buf.get_u8() != 0;
 
                 let start = buf.position() as usize;
@@ -252,15 +252,15 @@ impl AppPacket {
                 ))
             }
             1 => Ok(AppPacket::ConnectionClosed(ConnectionClosedPacket {
-                connection_id: ConnectionId(buf.get_u32()),
+                connection_id: ConnectionId(buf.get_i32()),
                 reason: ArcCloseReason::try_from(buf.get_u8())?,
             })),
             2 => Ok(AppPacket::ConnectionJoin(ConnectionJoinPacket {
-                connection_id: ConnectionId(buf.get_u32()),
+                connection_id: ConnectionId(buf.get_i32()),
                 room_id: RoomId(read_string(buf)?),
             })),
             3 => Ok(AppPacket::ConnectionIdling(ConnectionIdlingPacket {
-                connection_id: ConnectionId(buf.get_u32()),
+                connection_id: ConnectionId(buf.get_i32()),
             })),
             4 => Ok(AppPacket::RoomCreationRequest(RoomCreationRequestPacket {
                 version: read_string(buf)?,
@@ -303,23 +303,23 @@ impl AppPacket {
         match self {
             AppPacket::ConnectionPacketWrap(p) => {
                 buf.put_u8(0);
-                buf.put_u32(p.connection_id.0);
+                buf.put_i32(p.connection_id.0);
                 buf.put_u8(if p.is_tcp { 1 } else { 0 });
                 buf.extend_from_slice(&p.buffer);
             }
             AppPacket::ConnectionClosed(p) => {
                 buf.put_u8(1);
-                buf.put_u32(p.connection_id.0);
+                buf.put_i32(p.connection_id.0);
                 buf.put_u8(p.reason as u8);
             }
             AppPacket::ConnectionJoin(p) => {
                 buf.put_u8(2);
-                buf.put_u32(p.connection_id.0);
+                buf.put_i32(p.connection_id.0);
                 write_string(buf, &p.room_id.0);
             }
             AppPacket::ConnectionIdling(p) => {
                 buf.put_u8(3);
-                buf.put_u32(p.connection_id.0);
+                buf.put_i32(p.connection_id.0);
             }
             AppPacket::RoomCreationRequest(_) => {
                 panic!("Client only")
