@@ -395,11 +395,9 @@ pub fn read_stats(buf: &mut Cursor<Bytes>) -> Result<Stats, AppError> {
 
     match serde_json::from_str::<Stats>(&json) {
         Ok(data) => Ok(data),
-        Err(e) => {
-            Err(AppError::PacketParsing(format!(
-                "Failed to parse stats: {}. JSON: {}",
-                e, json
-            )))
-        }
+        Err(e) => Err(AppError::PacketParsing(format!(
+            "Failed to parse stats: {}. JSON: {}",
+            e, json
+        ))),
     }
 }

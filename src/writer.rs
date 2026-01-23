@@ -9,6 +9,7 @@ use tokio::net::UdpSocket;
 pub struct TcpWriter {
     writer: tokio::net::tcp::OwnedWriteHalf,
     pub last_write: Instant,
+    pub notified_idle: bool,
 }
 
 impl TcpWriter {
@@ -16,18 +17,15 @@ impl TcpWriter {
         Self {
             writer,
             last_write: Instant::now(),
+            notified_idle: false,
         }
-    }
-
-    pub async fn write(&mut self, data: &[u8]) -> anyhow::Result<()> {
-        self.writer.write_all(data).await?;
-        self.last_write = Instant::now();
-        Ok(())
     }
 
     pub async fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> anyhow::Result<()> {
         self.writer.write_vectored(bufs).await?;
         self.last_write = Instant::now();
+        self.notified_idle = false;
+
         Ok(())
     }
 }

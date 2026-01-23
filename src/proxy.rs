@@ -141,7 +141,6 @@ async fn accept_tcp_connection(
                 limiter,
                 last_read: Instant::now(),
                 packet_queue: Vec::new(),
-                notified_idle: false,
                 room: None,
             };
 
@@ -153,6 +152,7 @@ async fn accept_tcp_connection(
 
             if let Some(addr) = actor.udp_writer.addr {
                 state.remove_udp(addr);
+                info!("UDP connection {} closed", addr);
             }
         });
     }

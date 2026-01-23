@@ -46,7 +46,6 @@ pub struct ConnectionActor {
     pub limiter: Arc<AtomicRateLimiter>,
     pub last_read: Instant,
     pub packet_queue: Vec<Bytes>,
-    pub notified_idle: bool,
     pub room: Option<ConnectionRoom>,
 }
 
@@ -64,8 +63,8 @@ impl ConnectionActor {
         let mut tick_interval = tokio::time::interval(Duration::from_millis(TICK_INTERVAL_MS));
 
         loop {
-            let mut headers: Vec<[u8; 2]> = Vec::with_capacity(16);
-            let mut payloads: Vec<Bytes> = Vec::with_capacity(16);
+            let mut headers: Vec<[u8; 2]> = Vec::with_capacity(64);
+            let mut payloads: Vec<Bytes> = Vec::with_capacity(64);
 
             tokio::select! {
                 read_result = reader.read_buf(&mut buf) => {
@@ -73,7 +72,6 @@ impl ConnectionActor {
                         Ok(0) => return Err(anyhow::anyhow!("Connection closed by peer")),
                         Ok(_n) => {
                             self.last_read = Instant::now();
-                            self.notified_idle = false;
 
                             self.process_tcp_buffer(&mut buf).await?;
                         }
@@ -97,16 +95,17 @@ impl ConnectionActor {
                             }
                             self.tcp_writer.write_vectored(&slices).await?;
                         }
+
+                        if self.is_idle() && !self.tcp_writer.notified_idle {
+                            self.notify_idle();
+                        }
+
                     } else {
                         return Err(anyhow::anyhow!("Connection closed by peer, no action"));
                     }
                 }
 
                 _ = tick_interval.tick() => {
-                    if self.is_idle() && !self.notified_idle {
-                        self.notify_idle();
-                    }
-
                     if self.tcp_writer.last_write.elapsed() > KEEP_ALIVE_INTERVAL_MS {
                          self.write_packet(AnyPacket::Framework(FrameworkMessage::KeepAlive)).await?;
                     }
@@ -563,13 +562,11 @@ impl ConnectionActor {
                 payloads.push(bytes);
             }
             ConnectionAction::SendTCPRaw(b) => {
-                self.notified_idle = false;
                 let len = b.len() as u16;
                 headers.push(len.to_be_bytes());
                 payloads.push(b);
             }
             ConnectionAction::SendUDPRaw(b) => {
-                self.notified_idle = false;
                 self.udp_writer.send_raw(&b).await?;
             }
             ConnectionAction::Close => {
@@ -595,12 +592,9 @@ impl ConnectionActor {
                 }))
                 .await?;
 
-                self.notified_idle = false;
-
                 info!("New connection {} from {}", self.id, addr);
             }
             ConnectionAction::ProcessPacket(packet, is_tcp) => {
-                self.notified_idle = false;
                 self.handle_packet(packet, is_tcp).await?;
             }
         }
@@ -624,7 +618,7 @@ impl ConnectionActor {
         };
 
         if self.state.idle(self.id, &room.room_id()) {
-            self.notified_idle = true;
+            self.tcp_writer.notified_idle = true;
         }
     }
 }
