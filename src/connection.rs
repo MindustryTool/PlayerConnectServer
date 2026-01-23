@@ -21,6 +21,7 @@ const CONNECTION_TIME_OUT_MS: Duration = Duration::from_millis(30000);
 const KEEP_ALIVE_INTERVAL_MS: Duration = Duration::from_millis(3000);
 const PACKET_LENGTH_LENGTH: usize = 2;
 const TICK_INTERVAL_MS: u64 = 1000 / 15;
+const PACKET_BACTH_SIZE: usize = 16;
 
 pub struct ConnectionRoom {
     room_id: RoomId,
@@ -63,8 +64,8 @@ impl ConnectionActor {
         let mut tick_interval = tokio::time::interval(Duration::from_millis(TICK_INTERVAL_MS));
 
         loop {
-            let mut headers: Vec<[u8; 2]> = Vec::with_capacity(64);
-            let mut payloads: Vec<Bytes> = Vec::with_capacity(64);
+            let mut headers: Vec<[u8; 2]> = Vec::with_capacity(PACKET_BACTH_SIZE);
+            let mut payloads: Vec<Bytes> = Vec::with_capacity(PACKET_BACTH_SIZE);
 
             tokio::select! {
                 read_result = reader.read_buf(&mut buf) => {
@@ -83,9 +84,13 @@ impl ConnectionActor {
                     if let Some(action) = action {
                         self.handle_action(action, &mut headers, &mut payloads).await?;
 
-                        while let Ok(action) = self.rx.try_recv() {
+                    for _ in 0..PACKET_BACTH_SIZE {
+                        if let Ok(action) = self.rx.try_recv() {
                             self.handle_action(action, &mut headers, &mut payloads).await?;
+                        } else {
+                        break;
                         }
+                    }
 
                         if !payloads.is_empty() {
                             let mut slices = Vec::with_capacity(headers.len() * 2);
