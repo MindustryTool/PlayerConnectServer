@@ -2,7 +2,6 @@ use crate::constant::{ArcCloseReason, CloseReason, MessageType};
 use crate::error::AppError;
 use crate::models::Stats;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use tracing::info;
 use std::convert::TryFrom;
 use std::io::Cursor;
 
@@ -397,7 +396,6 @@ pub fn read_stats(buf: &mut Cursor<Bytes>) -> Result<Stats, AppError> {
     match serde_json::from_str::<Stats>(&json) {
         Ok(data) => Ok(data),
         Err(e) => {
-            // Log? No, we return error.
             Err(AppError::PacketParsing(format!(
                 "Failed to parse stats: {}. JSON: {}",
                 e, json

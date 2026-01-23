@@ -111,3 +111,5 @@ One async runtime
 Do not mix Tokio + async-std
 
 Use channels instead of shared mutable state
+
+8. Run cargo check before committing, and fix all errors

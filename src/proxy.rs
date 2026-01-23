@@ -25,7 +25,6 @@ pub async fn run(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
 
     info!("Proxy Server listening on TCP/UDP {}", port);
 
-    // Spawn multiple UDP listeners for better throughput
     for _ in 0..4 {
         spawn_udp_listener(state.clone(), udp_socket.clone());
     }
@@ -41,18 +40,15 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
             if buf.len() > 0 {
                 buf.clear();
             }
-            // BytesMut logic: if we froze the previous buffer, clear() might not free memory if shared.
-            // But we need to ensure we have capacity.
+
             if buf.capacity() < UDP_BUFFER_SIZE {
                 buf.reserve(UDP_BUFFER_SIZE);
             }
 
             match socket.recv_buf_from(&mut buf).await {
                 Ok((_len, addr)) => {
-                    // Check rate limit early
                     if let Some((_, limiter)) = state.get_route(&addr) {
                         if !limiter.check() {
-                            // Rate limit exceeded, drop packet
                             continue;
                         }
                     }
@@ -146,13 +142,14 @@ async fn accept_tcp_connection(
                 last_read: Instant::now(),
                 packet_queue: Vec::new(),
                 notified_idle: false,
+                room: None,
             };
 
             if let Err(e) = actor.run(reader).await {
                 error!("Connection {} error: {}", id, e);
             }
 
-            state.remove_connection(id);
+            state.remove_connection(id, actor.room.as_ref().map(|r| r.room_id().clone()));
 
             if let Some(addr) = actor.udp_writer.addr {
                 state.remove_udp(addr);

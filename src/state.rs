@@ -1,10 +1,10 @@
 use crate::config::Config;
-use crate::constant::ArcCloseReason;
+use crate::constant::{ArcCloseReason, CloseReason};
 use crate::error::AppError;
 use crate::models::{RoomView, Stats};
 use crate::packet::{
     AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionId, ConnectionIdlingPacket,
-    ConnectionJoinPacket, RoomId,
+    ConnectionJoinPacket, RoomClosedPacket, RoomId,
 };
 use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;
@@ -40,6 +40,12 @@ pub struct Room {
     pub protocol_version: String,
 }
 
+impl Room {
+    pub fn is_host(&self, connection_id: ConnectionId) -> bool {
+        self.host_connection_id == connection_id
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum RoomUpdate {
     Update { id: RoomId, data: Room },
@@ -48,7 +54,6 @@ pub enum RoomUpdate {
 
 pub struct RoomState {
     pub rooms: DashMap<RoomId, Room>,
-    pub connection_to_room: DashMap<ConnectionId, RoomId>,
     pub broadcast_sender: tokio::sync::broadcast::Sender<RoomUpdate>,
     // Keep a receiver to prevent the channel from closing when all clients disconnect
     pub _broadcast_receiver: tokio::sync::broadcast::Receiver<RoomUpdate>,
@@ -75,12 +80,6 @@ impl RoomState {
             .cloned()
     }
 
-    pub fn find_connection_room_id(&self, connection_id: ConnectionId) -> Option<RoomId> {
-        self.connection_to_room
-            .get(&connection_id)
-            .map(|r| r.clone())
-    }
-
     pub fn join(
         &self,
         connection_id: ConnectionId,
@@ -89,8 +88,6 @@ impl RoomState {
     ) -> Result<(), AppError> {
         if let Some(mut room) = self.rooms.get_mut(room_id) {
             room.members.insert(connection_id, sender);
-            self.connection_to_room
-                .insert(connection_id, room_id.clone());
 
             let sender = match room.members.get(&room.host_connection_id) {
                 Some(sender) => sender,
@@ -120,10 +117,8 @@ impl RoomState {
         Ok(())
     }
 
-    pub fn leave(&self, connection_id: ConnectionId) -> Option<RoomId> {
-        let (_, room_id) = self.connection_to_room.remove(&connection_id)?;
-
-        if let Some(mut room) = self.rooms.get_mut(&room_id) {
+    pub fn leave(&self, connection_id: ConnectionId, room_id: &RoomId) {
+        if let Some(mut room) = self.rooms.get_mut(room_id) {
             room.members.remove(&connection_id);
 
             let sender = match room.members.get(&room.host_connection_id) {
@@ -133,7 +128,7 @@ impl RoomState {
                         "Host {} not found in room {} while leaving",
                         room.host_connection_id, room_id
                     );
-                    return Some(room_id);
+                    return;
                 }
             };
 
@@ -149,8 +144,6 @@ impl RoomState {
                 );
             }
         }
-
-        Some(room_id)
     }
 
     pub fn create(&self, init: RoomInit) -> RoomId {
@@ -186,8 +179,6 @@ impl RoomState {
         };
 
         self.rooms.insert(room_id.clone(), room);
-        self.connection_to_room
-            .insert(connection_id, room_id.clone());
 
         room_id
     }
@@ -196,12 +187,21 @@ impl RoomState {
         let removed = self.rooms.remove(room_id);
 
         if let Some((_, room)) = removed {
-            // Cleanup connection_to_room map
-            for conn_id in room.members.keys() {
-                self.connection_to_room.remove(conn_id);
-            }
-
             info!("Room closed {}", room_id);
+
+            for (id, sender) in room.members {
+                if let Err(e) = sender.try_send(ConnectionAction::SendTCP(AnyPacket::App(
+                    AppPacket::RoomClosed(RoomClosedPacket {
+                        reason: CloseReason::Closed,
+                    }),
+                ))) {
+                    warn!("Failed to send room closed packet to {}: {}", id, e);
+                }
+
+                if let Err(e) = sender.try_send(ConnectionAction::Close) {
+                    warn!("Failed to send close action to {}: {}", id, e);
+                }
+            }
 
             if let Err(err) = self
                 .broadcast_sender
@@ -270,14 +270,9 @@ impl RoomState {
         }
     }
 
-    pub fn idle(&self, connection_id: ConnectionId) -> bool {
-        let room_id = match self.connection_to_room.get(&connection_id) {
-            Some(id) => id.clone(),
-            None => return true,
-        };
-
-        if let Some(room) = self.rooms.get(&room_id) {
-            if room.host_connection_id == connection_id {
+    pub fn idle(&self, connection_id: ConnectionId, room_id: &RoomId) -> bool {
+        if let Some(room) = self.rooms.get(room_id) {
+            if room.is_host(connection_id) {
                 return true;
             }
 
@@ -341,7 +336,6 @@ impl AppState {
             config,
             room_state: RoomState {
                 rooms: DashMap::new(),
-                connection_to_room: DashMap::new(),
                 broadcast_sender: tx,
                 _broadcast_receiver: rx,
             },
@@ -387,42 +381,27 @@ impl AppState {
         self.udp_routes.get(addr).map(|val| val.clone())
     }
 
-    pub fn idle(&self, connection_id: ConnectionId) -> bool {
-        self.room_state.idle(connection_id)
+    pub fn idle(&self, connection_id: ConnectionId, room_id: &RoomId) -> bool {
+        self.room_state.idle(connection_id, room_id)
     }
 
-    pub fn remove_connection(&self, connection_id: ConnectionId) {
+    pub fn remove_connection(&self, connection_id: ConnectionId, room_id: Option<RoomId>) {
         self.connections.remove(&connection_id);
 
         // Handle room logic
-        let room_id_opt = self.room_state.leave(connection_id);
+        if let Some(room_id) = room_id {
+            self.room_state.leave(connection_id, &room_id);
 
-        if let Some(room_id) = room_id_opt {
             // Check if host
             let should_close = {
                 if let Some(room) = self.room_state.rooms.get(&room_id) {
-                    room.host_connection_id == connection_id
+                    room.is_host(connection_id)
                 } else {
                     false
                 }
             };
 
             if should_close {
-                // Close room and disconnect all members
-                let members = {
-                    if let Some(room) = self.room_state.rooms.get(&room_id) {
-                        room.members.values().cloned().collect::<Vec<_>>()
-                    } else {
-                        Vec::new()
-                    }
-                };
-
-                for sender in members {
-                    if let Err(e) = sender.try_send(ConnectionAction::Close) {
-                        warn!("Failed to send close action to member: {}", e);
-                    }
-                }
-
                 self.room_state.close(&room_id);
             }
         }
