@@ -8,6 +8,11 @@ use std::io::Cursor;
 pub const APP_PACKET_ID: i8 = -4;
 pub const FRAMEWORK_PACKET_ID: i8 = -2;
 
+// These packet require server to send a idle packet to keep the host sending stream
+pub const STREAM_BEGIN_PACKET_ID: u8 = 0;
+pub const STREAM_CHUNK_PACKET_ID: u8 = 1;
+pub const WORLD_STREAM_PACKET_ID: u8 = 2;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConnectionId(pub i32);
 
@@ -130,6 +135,12 @@ pub struct StatsPacket {
 }
 
 impl AnyPacket {
+    pub fn is_stream_packet(bytes: &Bytes) -> bool {
+        bytes.starts_with(&[STREAM_BEGIN_PACKET_ID])
+            || bytes.starts_with(&[STREAM_CHUNK_PACKET_ID])
+            || bytes.starts_with(&[WORLD_STREAM_PACKET_ID])
+    }
+
     pub fn read(buf: &mut Cursor<Bytes>) -> Result<Self, AppError> {
         if !buf.has_remaining() {
             return Err(AppError::PacketParsing("Empty packet".to_string()));

@@ -118,7 +118,7 @@ impl ConnectionActor {
                     }
 
                     if self.last_read.elapsed() > CONNECTION_TIME_OUT_MS {
-                        info!("Connection {} timed out", self.id);
+                        info!("{} Connection timed out", self.id);
                         return Err(anyhow::anyhow!("Connection timed out"));
                     }
                 }
@@ -138,7 +138,7 @@ impl ConnectionActor {
             };
 
             if !self.limiter.check() {
-                warn!("Connection {} rate limit exceeded", self.id);
+                warn!("{} Connection rate limit exceeded", self.id);
                 return Err(anyhow::anyhow!("Rate limit exceeded"));
             }
 
@@ -512,6 +512,11 @@ impl ConnectionActor {
                 {
                     if !is_host {
                         return Err(anyhow!("Not room owner"));
+                    }
+
+                    if AnyPacket::is_stream_packet(&buffer) {
+                        info!("Stream packet received");
+                        self.tcp_writer.idling = true;
                     }
 
                     let Some(sender) = self.state.get_sender(connection_id) else {
