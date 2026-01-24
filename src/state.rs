@@ -167,16 +167,16 @@ impl RoomState {
 
         if let Some((_, room)) = removed {
             info!("Room closed {}", room_id);
+            
+            if let Err(e) = room.host_sender.try_send(ConnectionAction::SendTCP(AnyPacket::App(
+                AppPacket::RoomClosed(RoomClosedPacket {
+                    reason: RoomCloseReason::Closed,
+                }),
+            ))) {
+                warn!("Failed to send room closed packet to host {}: {}", room.host_connection_id, e);
+            }
 
             for (id, sender) in room.members {
-                if let Err(e) = sender.try_send(ConnectionAction::SendTCP(AnyPacket::App(
-                    AppPacket::RoomClosed(RoomClosedPacket {
-                        reason: RoomCloseReason::Closed,
-                    }),
-                ))) {
-                    warn!("Failed to send room closed packet to {}: {}", id, e);
-                }
-
                 if let Err(e) =
                     sender.try_send(ConnectionAction::Close(ConnectionCloseReason::Closed))
                 {
