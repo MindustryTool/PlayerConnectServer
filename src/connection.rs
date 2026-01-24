@@ -1,7 +1,7 @@
 use crate::constant::{ConnectionCloseReason, MessageType};
 use crate::packet::{
     AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionId, ConnectionPacketWrapPacket,
-    FrameworkMessage, Message2Packet, MessagePacket, PopupPacket, RoomId, RoomLinkPacket,
+    FrameworkMessage, Message2Packet, RoomId, RoomLinkPacket,
 };
 use crate::rate::AtomicRateLimiter;
 use crate::state::{AppState, ConnectionAction, RoomInit, RoomUpdate};
@@ -157,12 +157,6 @@ impl ConnectionActor {
                 }
                 Err(e) => {
                     error!("Error reading packet: {:?} from connection {}", e, self.id);
-
-                    let packet = AnyPacket::App(AppPacket::Popup(PopupPacket {
-                        message: "Your version of MindustryTool is no longer supported. Please update to the latest version.".to_string(),
-                    }));
-
-                    self.write_packet(packet).await?;
                     continue;
                 }
             }
@@ -310,11 +304,8 @@ impl ConnectionActor {
                         "Connection {} tried to join room {} with wrong password.",
                         self.id, p.room_id
                     );
-                    self.write_packet(AnyPacket::App(AppPacket::Message(MessagePacket {
-                        message: "Wrong password".to_string(),
-                    })))
-                    .await?;
-                    return Ok(());
+
+                    return Err(anyhow!("Wrong password"));
                 }
 
                 if !can_join {
@@ -322,12 +313,8 @@ impl ConnectionActor {
                         "Connection {} tried to join a non-existent room {}.",
                         self.id, p.room_id
                     );
-                    self.write_packet(AnyPacket::App(AppPacket::Popup(PopupPacket {
-                        message: "Room not found".to_string(),
-                    })))
-                    .await?;
 
-                    return Ok(());
+                    return Err(anyhow!("Room not found"));
                 }
 
                 if let Some(sender) = self.state.get_sender(self.id) {
