@@ -444,8 +444,8 @@ impl ConnectionActor {
 
                         if is_in_room {
                             info!(
-                                "Connection {} (room {}) closed the connection {}.",
-                                self.id, room_id, p.connection_id
+                                "Connection {} (room {}) closed the connection {}: {:?}.",
+                                self.id, room_id, p.connection_id, p.reason
                             );
 
                             if let Err(e) = sender
@@ -554,7 +554,7 @@ impl ConnectionActor {
                 }
 
                 self.write_packet(AnyPacket::Framework(FrameworkMessage::RegisterUDP {
-                    connection_id: self.id,
+                    connection_id: ConnectionId(0),
                 }))
                 .await?;
 

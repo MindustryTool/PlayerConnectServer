@@ -5,7 +5,6 @@ use crate::state::{AppState, ConnectionAction};
 use crate::writer::{TcpWriter, UdpWriter};
 use bytes::BytesMut;
 use std::io::Cursor;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, UdpSocket};
@@ -62,7 +61,16 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
                                 AnyPacket::Framework(FrameworkMessage::RegisterUDP {
                                     connection_id,
                                 }) => {
-                                    handle_register_udp(&state, connection_id, addr).await;
+                                    if let Some(sender) = state.get_sender(connection_id) {
+                                        if let Err(e) =
+                                            sender.try_send(ConnectionAction::RegisterUDP(addr))
+                                        {
+                                            info!(
+                                                "Failed to register UDP for connection {}: {}",
+                                                connection_id, e
+                                            );
+                                        }
+                                    }
                                 }
                                 _ => {
                                     let Some((sender, _)) = state.get_route(&addr) else {
@@ -87,17 +95,6 @@ fn spawn_udp_listener(state: Arc<AppState>, socket: Arc<UdpSocket>) {
             }
         }
     });
-}
-
-async fn handle_register_udp(state: &Arc<AppState>, connection_id: ConnectionId, addr: SocketAddr) {
-    if let Some(sender) = state.get_sender(connection_id) {
-        if let Err(e) = sender.try_send(ConnectionAction::RegisterUDP(addr)) {
-            info!(
-                "Failed to register UDP for connection {}: {}",
-                connection_id, e
-            );
-        }
-    }
 }
 
 async fn accept_tcp_connection(
