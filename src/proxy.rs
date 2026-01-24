@@ -145,7 +145,9 @@ async fn accept_tcp_connection(
             };
 
             if let Err(e) = actor.run(reader).await {
-                info!("Connection {} closed: {}", id, e);
+                if actor.udp_writer.addr.is_some() {
+                    info!("Connection {} closed: {}", id, e);
+                }
             }
 
             state.remove_connection(id, actor.room.as_ref().map(|r| r.room_id().clone()));

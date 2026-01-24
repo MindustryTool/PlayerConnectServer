@@ -20,7 +20,7 @@ const TCP_BUFFER_SIZE: usize = 32768;
 const CONNECTION_TIME_OUT_MS: Duration = Duration::from_millis(30000);
 const KEEP_ALIVE_INTERVAL_MS: Duration = Duration::from_millis(3000);
 const PACKET_LENGTH_LENGTH: usize = 2;
-const TICK_INTERVAL_MS: u64 = 1000 / 15;
+const TICK_INTERVAL_MS: u64 = 1000 / 60;
 const PACKET_BACTH_SIZE: usize = 16;
 
 pub struct ConnectionRoom {
@@ -84,13 +84,14 @@ impl ConnectionActor {
                     if let Some(action) = action {
                         self.handle_action(action, &mut headers, &mut payloads).await?;
 
-                    for _ in 0..PACKET_BACTH_SIZE {
-                        if let Ok(action) = self.rx.try_recv() {
-                            self.handle_action(action, &mut headers, &mut payloads).await?;
-                        } else {
-                        break;
+                        for _ in 0..PACKET_BACTH_SIZE {
+                            if let Ok(action) = self.rx.try_recv() {
+                                self.handle_action(action, &mut headers, &mut payloads).await?;
+
+                            } else {
+                                break;
+                            }
                         }
-                    }
 
                         if !payloads.is_empty() {
                             let mut slices = Vec::with_capacity(headers.len() * 2);
@@ -101,9 +102,6 @@ impl ConnectionActor {
                             self.tcp_writer.write_vectored(&slices).await?;
                         }
 
-                        if self.is_idle() && !self.tcp_writer.notified_idle {
-                            self.notify_idle();
-                        }
 
                     } else {
                         return Err(anyhow::anyhow!("Connection closed by peer, no action"));
@@ -111,6 +109,10 @@ impl ConnectionActor {
                 }
 
                 _ = tick_interval.tick() => {
+                    if !self.tcp_writer.idling {
+                            self.notify_idle();
+                    }
+
                     if self.tcp_writer.last_write.elapsed() > KEEP_ALIVE_INTERVAL_MS {
                          self.write_packet(AnyPacket::Framework(FrameworkMessage::KeepAlive)).await?;
                     }
@@ -613,17 +615,13 @@ impl ConnectionActor {
         self.tcp_writer.write_vectored(&slices).await
     }
 
-    fn is_idle(&self) -> bool {
-        true
-    }
-
     fn notify_idle(&mut self) {
         let Some(room) = &self.room else {
             return;
         };
 
         if self.state.idle(self.id, &room.room_id()) {
-            self.tcp_writer.notified_idle = true;
+            self.tcp_writer.idling = false;
         }
     }
 }
