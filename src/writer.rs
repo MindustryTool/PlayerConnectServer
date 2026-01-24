@@ -24,7 +24,7 @@ impl TcpWriter {
     pub async fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> anyhow::Result<()> {
         self.writer.write_vectored(bufs).await?;
         self.last_write = Instant::now();
-        self.idling = false;
+        self.idling = true;
 
         Ok(())
     }

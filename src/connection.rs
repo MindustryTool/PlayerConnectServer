@@ -20,7 +20,7 @@ const TCP_BUFFER_SIZE: usize = 32768;
 const CONNECTION_TIME_OUT_MS: Duration = Duration::from_millis(30000);
 const KEEP_ALIVE_INTERVAL_MS: Duration = Duration::from_millis(3000);
 const PACKET_LENGTH_LENGTH: usize = 2;
-const TICK_INTERVAL_MS: u64 = 1000 / 60;
+const TICK_INTERVAL_MS: u64 = 1000 / 120;
 const PACKET_BACTH_SIZE: usize = 16;
 
 pub struct ConnectionRoom {
@@ -109,7 +109,7 @@ impl ConnectionActor {
                 }
 
                 _ = tick_interval.tick() => {
-                    if !self.tcp_writer.idling {
+                    if self.tcp_writer.idling {
                             self.notify_idle();
                     }
 
@@ -468,13 +468,8 @@ impl ConnectionActor {
                     }
 
                     if let Some(sender) = self.state.get_sender(p.connection_id) {
-                        let is_in_room = self
-                            .state
-                            .room_state
-                            .rooms
-                            .get(&room_id)
-                            .map(|r| r.members.contains_key(&p.connection_id))
-                            .unwrap_or(false);
+                        let is_in_room =
+                            self.state.room_state.is_in_room(&p.connection_id, &room_id);
 
                         if is_in_room {
                             info!(

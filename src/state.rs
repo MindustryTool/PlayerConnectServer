@@ -31,6 +31,7 @@ pub enum ConnectionAction {
 pub struct Room {
     pub id: RoomId,
     pub host_connection_id: ConnectionId,
+    pub host_sender: mpsc::Sender<ConnectionAction>,
     pub password: Option<String>,
     pub created_at: u128,
     pub updated_at: u128,
@@ -89,22 +90,12 @@ impl RoomState {
         if let Some(mut room) = self.rooms.get_mut(room_id) {
             room.members.insert(connection_id, sender);
 
-            let sender = match room.members.get(&room.host_connection_id) {
-                Some(sender) => sender,
-                None => {
-                    error!(
-                        "Host {} not found in room {} while joining",
-                        room.host_connection_id, room_id
-                    );
-                    return Ok(());
-                }
-            };
             let packet = AnyPacket::App(AppPacket::ConnectionJoin(ConnectionJoinPacket {
                 connection_id,
                 room_id: room_id.clone(),
             }));
 
-            if let Err(e) = sender.try_send(ConnectionAction::SendTCP(packet)) {
+            if let Err(e) = room.host_sender.try_send(ConnectionAction::SendTCP(packet)) {
                 info!(
                     "Failed to forward to host {}: {}",
                     room.host_connection_id, e
@@ -121,23 +112,12 @@ impl RoomState {
         if let Some(mut room) = self.rooms.get_mut(room_id) {
             room.members.remove(&connection_id);
 
-            let sender = match room.members.get(&room.host_connection_id) {
-                Some(sender) => sender,
-                None => {
-                    error!(
-                        "Host {} not found in room {} while leaving",
-                        room.host_connection_id, room_id
-                    );
-                    return;
-                }
-            };
-
             let packet = AnyPacket::App(AppPacket::ConnectionClosed(ConnectionClosedPacket {
                 connection_id,
                 reason: ArcCloseReason::Closed,
             }));
 
-            if let Err(e) = sender.try_send(ConnectionAction::SendTCP(packet)) {
+            if let Err(e) = room.host_sender.try_send(ConnectionAction::SendTCP(packet)) {
                 info!(
                     "Failed to forward to host {}: {}",
                     room.host_connection_id, e
@@ -162,13 +142,12 @@ impl RoomState {
         };
 
         let room_id = RoomId(Uuid::now_v7().to_string());
-        let mut members = HashMap::new();
-
-        members.insert(connection_id, sender);
+        let members = HashMap::new();
 
         let room = Room {
             id: room_id.clone(),
             host_connection_id: connection_id,
+            host_sender: sender,
             password,
             stats,
             members,
@@ -239,18 +218,7 @@ impl RoomState {
             }
         };
 
-        let sender = match room.members.get(&room.host_connection_id) {
-            Some(sender) => sender,
-            None => {
-                error!(
-                    "Host {} not found in room {} while forward",
-                    room.host_connection_id, room_id
-                );
-                return;
-            }
-        };
-
-        if let Err(e) = sender.try_send(action) {
+        if let Err(e) = room.host_sender.try_send(action) {
             warn!(
                 "Failed to forward to host {}: {}",
                 room.host_connection_id, e
@@ -276,28 +244,33 @@ impl RoomState {
                 return true;
             }
 
-            if let Some(sender) = room.members.get(&room.host_connection_id) {
-                let packet = AnyPacket::App(AppPacket::ConnectionIdling(ConnectionIdlingPacket {
-                    connection_id,
-                }));
+            let packet = AnyPacket::App(AppPacket::ConnectionIdling(ConnectionIdlingPacket {
+                connection_id,
+            }));
 
-                match sender.try_send(ConnectionAction::SendTCP(packet)) {
-                    Ok(_) => return true,
-                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                        warn!("Host channel full, retrying idle packet later");
-                        return false;
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to forward idle packet to host {}: {}",
-                            room.host_connection_id, e
-                        );
-                        return true;
-                    }
+            match room.host_sender.try_send(ConnectionAction::SendTCP(packet)) {
+                Ok(_) => return true,
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    warn!("Host channel full, retrying idle packet later");
+                    return false;
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to forward idle packet to host {}: {}",
+                        room.host_connection_id, e
+                    );
+                    return true;
                 }
             }
         }
         true
+    }
+
+    pub fn is_in_room(&self, connection_id: &ConnectionId, room_id: &RoomId) -> bool {
+        self.rooms
+            .get(&room_id)
+            .map(|r| r.members.contains_key(&connection_id))
+            .unwrap_or(false)
     }
 }
 
