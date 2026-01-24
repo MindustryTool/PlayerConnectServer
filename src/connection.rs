@@ -1,7 +1,7 @@
 use crate::constant::{ConnectionCloseReason, MessageType};
 use crate::packet::{
     AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionId, ConnectionPacketWrapPacket,
-    FrameworkMessage, Message2Packet, RoomId, RoomLinkPacket,
+    FrameworkMessage, Message2Packet, MessagePacket, RoomId, RoomLinkPacket,
 };
 use crate::rate::AtomicRateLimiter;
 use crate::state::{AppState, ConnectionAction, RoomInit, RoomUpdate};
@@ -305,7 +305,12 @@ impl ConnectionActor {
                         self.id, p.room_id
                     );
 
-                    return Err(anyhow!("Wrong password"));
+                    self.write_packet(AnyPacket::App(AppPacket::Message(MessagePacket {
+                        message: "@player-connect.wrong-password".to_string(),
+                    })))
+                    .await?;
+
+                    return Ok(());
                 }
 
                 if !can_join {
@@ -314,7 +319,12 @@ impl ConnectionActor {
                         self.id, p.room_id
                     );
 
-                    return Err(anyhow!("Room not found"));
+                    self.write_packet(AnyPacket::App(AppPacket::Message(MessagePacket {
+                        message: "@player-connect.room-not-found".to_string(),
+                    })))
+                    .await?;
+
+                    return Ok(());
                 }
 
                 if let Some(sender) = self.state.get_sender(self.id) {
@@ -437,20 +447,6 @@ impl ConnectionActor {
                                 "Connection {} (room {}) closed the connection {}.",
                                 self.id, room_id, p.connection_id
                             );
-
-                            if let Err(e) =
-                                sender.try_send(ConnectionAction::SendTCP(AnyPacket::App(
-                                    AppPacket::ConnectionClosed(ConnectionClosedPacket {
-                                        connection_id: p.connection_id,
-                                        reason: p.reason,
-                                    }),
-                                )))
-                            {
-                                warn!(
-                                    "Failed to send connection closed packet to {}: {}",
-                                    p.connection_id, e
-                                );
-                            }
 
                             if let Err(e) = sender
                                 .try_send(ConnectionAction::Close(ConnectionCloseReason::Closed))
