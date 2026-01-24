@@ -515,7 +515,6 @@ impl ConnectionActor {
                     }
 
                     if AnyPacket::is_stream_packet(&buffer) {
-                        info!("Stream packet received");
                         self.tcp_writer.idling = true;
                     }
 
