@@ -4,24 +4,20 @@ use std::convert::TryFrom;
 
 #[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, PartialEq)]
 #[repr(u8)]
-pub enum CloseReason {
+pub enum RoomCloseReason {
     Closed = 0,
-    ObsoleteClient = 1,
-    OutdatedVersion = 2,
-    ServerClosed = 3,
-    PackingSpamming = 4,
+    OutdatedVersion = 1,
+    ServerClosed = 2,
 }
 
-impl TryFrom<u8> for CloseReason {
+impl TryFrom<u8> for RoomCloseReason {
     type Error = AppError;
 
     fn try_from(value: u8) -> Result<Self, AppError> {
         match value {
-            0 => Ok(CloseReason::Closed),
-            1 => Ok(CloseReason::ObsoleteClient),
-            2 => Ok(CloseReason::OutdatedVersion),
-            3 => Ok(CloseReason::ServerClosed),
-            4 => Ok(CloseReason::PackingSpamming),
+            0 => Ok(RoomCloseReason::Closed),
+            1 => Ok(RoomCloseReason::OutdatedVersion),
+            2 => Ok(RoomCloseReason::ServerClosed),
             _ => Err(AppError::PacketParsing(format!(
                 "Invalid CloseReason: {}",
                 value
@@ -32,22 +28,24 @@ impl TryFrom<u8> for CloseReason {
 
 #[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, PartialEq)]
 #[repr(u8)]
-pub enum ArcCloseReason {
+pub enum ConnectionCloseReason {
     Closed = 0,
     Timeout = 1,
     Error = 2,
+    PacketSpam = 3,
 }
 
-impl TryFrom<u8> for ArcCloseReason {
+impl TryFrom<u8> for ConnectionCloseReason {
     type Error = AppError;
 
     fn try_from(value: u8) -> Result<Self, AppError> {
         match value {
-            0 => Ok(ArcCloseReason::Closed),
-            1 => Ok(ArcCloseReason::Timeout),
-            2 => Ok(ArcCloseReason::Error),
+            0 => Ok(ConnectionCloseReason::Closed),
+            1 => Ok(ConnectionCloseReason::Timeout),
+            2 => Ok(ConnectionCloseReason::Error),
+            3 => Ok(ConnectionCloseReason::PacketSpam),
             _ => Err(AppError::PacketParsing(format!(
-                "Invalid ArcCloseReason: {}",
+                "Invalid ConnectionCloseReason: {}",
                 value
             ))),
         }

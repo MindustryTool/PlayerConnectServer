@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::constant::{ArcCloseReason, CloseReason};
+use crate::constant::{ConnectionCloseReason, RoomCloseReason};
 use crate::error::AppError;
 use crate::models::{RoomView, Stats};
 use crate::packet::{
@@ -22,7 +22,7 @@ pub enum ConnectionAction {
     SendTCP(AnyPacket),
     SendTCPRaw(Bytes),
     SendUDPRaw(Bytes),
-    Close,
+    Close(ConnectionCloseReason),
     RegisterUDP(SocketAddr),
     ProcessPacket(AnyPacket, bool),
 }
@@ -114,7 +114,7 @@ impl RoomState {
 
             let packet = AnyPacket::App(AppPacket::ConnectionClosed(ConnectionClosedPacket {
                 connection_id,
-                reason: ArcCloseReason::Closed,
+                reason: ConnectionCloseReason::Closed,
             }));
 
             if let Err(e) = room.host_sender.try_send(ConnectionAction::SendTCP(packet)) {
@@ -171,13 +171,15 @@ impl RoomState {
             for (id, sender) in room.members {
                 if let Err(e) = sender.try_send(ConnectionAction::SendTCP(AnyPacket::App(
                     AppPacket::RoomClosed(RoomClosedPacket {
-                        reason: CloseReason::Closed,
+                        reason: RoomCloseReason::Closed,
                     }),
                 ))) {
                     warn!("Failed to send room closed packet to {}: {}", id, e);
                 }
 
-                if let Err(e) = sender.try_send(ConnectionAction::Close) {
+                if let Err(e) =
+                    sender.try_send(ConnectionAction::Close(ConnectionCloseReason::Closed))
+                {
                     warn!("Failed to send close action to {}: {}", id, e);
                 }
             }

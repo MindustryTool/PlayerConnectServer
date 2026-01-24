@@ -1,4 +1,4 @@
-use crate::constant::{ArcCloseReason, CloseReason, MessageType};
+use crate::constant::{ConnectionCloseReason, MessageType, RoomCloseReason};
 use crate::error::AppError;
 use crate::models::Stats;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -74,7 +74,7 @@ pub struct ConnectionPacketWrapPacket {
 #[derive(Debug, Clone)]
 pub struct ConnectionClosedPacket {
     pub connection_id: ConnectionId,
-    pub reason: ArcCloseReason,
+    pub reason: ConnectionCloseReason,
 }
 
 #[derive(Debug, Clone)]
@@ -104,7 +104,7 @@ pub struct RoomClosureRequestPacket;
 
 #[derive(Debug, Clone)]
 pub struct RoomClosedPacket {
-    pub reason: CloseReason,
+    pub reason: RoomCloseReason,
 }
 
 #[derive(Debug, Clone)]
@@ -264,7 +264,7 @@ impl AppPacket {
             }
             1 => Ok(AppPacket::ConnectionClosed(ConnectionClosedPacket {
                 connection_id: ConnectionId(buf.get_i32()),
-                reason: ArcCloseReason::try_from(buf.get_u8())?,
+                reason: ConnectionCloseReason::try_from(buf.get_u8())?,
             })),
             2 => Ok(AppPacket::ConnectionJoin(ConnectionJoinPacket {
                 connection_id: ConnectionId(buf.get_i32()),
@@ -280,7 +280,7 @@ impl AppPacket {
             })),
             5 => Ok(AppPacket::RoomClosureRequest(RoomClosureRequestPacket)),
             6 => Ok(AppPacket::RoomClosed(RoomClosedPacket {
-                reason: CloseReason::try_from(buf.get_u8())?,
+                reason: RoomCloseReason::try_from(buf.get_u8())?,
             })),
             7 => Ok(AppPacket::RoomLink(RoomLinkPacket {
                 room_id: RoomId(read_string(buf)?),

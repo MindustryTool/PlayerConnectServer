@@ -1,4 +1,4 @@
-use crate::constant::{ArcCloseReason, MessageType};
+use crate::constant::{ConnectionCloseReason, MessageType};
 use crate::packet::{
     AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionId, ConnectionPacketWrapPacket,
     FrameworkMessage, Message2Packet, MessagePacket, PopupPacket, RoomId, RoomLinkPacket,
@@ -177,26 +177,6 @@ impl ConnectionActor {
             let is_host = self.room.as_ref().map(|r| r.is_host).unwrap_or(false);
 
             if !is_host && !self.limiter.check() {
-                if let Some(ref room) = self.room {
-                    self.state.room_state.broadcast(
-                        &room.room_id,
-                        ConnectionAction::SendTCP(AnyPacket::App(AppPacket::Message2(
-                            Message2Packet {
-                                message: MessageType::PacketSpamming,
-                            },
-                        ))),
-                        None,
-                    );
-                }
-
-                self.write_packet(AnyPacket::App(AppPacket::ConnectionClosed(
-                    ConnectionClosedPacket {
-                        connection_id: self.id,
-                        reason: ArcCloseReason::Closed,
-                    },
-                )))
-                .await?;
-
                 warn!("Connection {} disconnected for packet spamming.", self.id);
                 return Err(anyhow!("Packet Spamming"));
             }
@@ -307,6 +287,7 @@ impl ConnectionActor {
                         "Connection {} left room {} to join {}",
                         self.id, current_room_id, p.room_id
                     );
+
                     self.state.room_state.leave(self.id, &current_room_id);
                     self.room = None;
                 }
@@ -346,13 +327,6 @@ impl ConnectionActor {
                     })))
                     .await?;
 
-                    self.write_packet(AnyPacket::App(AppPacket::ConnectionClosed(
-                        ConnectionClosedPacket {
-                            connection_id: self.id,
-                            reason: ArcCloseReason::Error,
-                        },
-                    )))
-                    .await?;
                     return Ok(());
                 }
 
@@ -490,7 +464,10 @@ impl ConnectionActor {
                                     p.connection_id, e
                                 );
                             }
-                            if let Err(e) = sender.try_send(ConnectionAction::Close) {
+
+                            if let Err(e) = sender
+                                .try_send(ConnectionAction::Close(ConnectionCloseReason::Closed))
+                            {
                                 warn!("Failed to send close action to {}: {}", p.connection_id, e);
                             }
                         } else {
@@ -526,7 +503,7 @@ impl ConnectionActor {
                             ConnectionAction::SendTCP(AnyPacket::App(AppPacket::ConnectionClosed(
                                 ConnectionClosedPacket {
                                     connection_id,
-                                    reason: ArcCloseReason::Closed,
+                                    reason: ConnectionCloseReason::Closed,
                                 },
                             ))),
                         );
@@ -575,8 +552,8 @@ impl ConnectionActor {
             ConnectionAction::SendUDPRaw(b) => {
                 self.udp_writer.send_raw(&b).await?;
             }
-            ConnectionAction::Close => {
-                return Err(anyhow::anyhow!("Closed"));
+            ConnectionAction::Close(reason) => {
+                return Err(anyhow::anyhow!("Connection closed: {:?}", reason));
             }
             ConnectionAction::RegisterUDP(addr) => {
                 if self.udp_writer.addr.is_some() {
