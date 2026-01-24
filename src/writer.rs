@@ -22,7 +22,12 @@ impl TcpWriter {
     }
 
     pub async fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> anyhow::Result<()> {
-        self.writer.write_vectored(bufs).await?;
+        // Ensure full write for each IoSlice to avoid partial-write issues.
+        // Using write_all per slice is simpler and avoids complex pointer math for partial vectored writes.
+        for slice in bufs {
+            self.writer.write_all(slice).await?;
+        }
+
         self.last_write = Instant::now();
         self.idling = true;
 

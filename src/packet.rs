@@ -404,7 +404,11 @@ pub fn write_string(buf: &mut BytesMut, s: &str) {
 pub fn read_stats(buf: &mut Cursor<Bytes>) -> Result<Stats, AppError> {
     let json = read_string(buf)?;
 
-    match serde_json::from_str::<Stats>(&json) {
+    // Offload potentially expensive JSON parsing to a blocking thread so we don't
+    // block the async reactor threads handling network I/O.
+    let res = tokio::task::block_in_place(|| serde_json::from_str::<Stats>(&json));
+
+    match res {
         Ok(data) => Ok(data),
         Err(e) => Err(AppError::PacketParsing(format!(
             "Failed to parse stats: {}. JSON: {}",
