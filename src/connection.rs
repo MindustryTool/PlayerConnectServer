@@ -1,4 +1,4 @@
-use crate::constant::{ConnectionCloseReason, MessageType};
+use crate::constant::{ConnectionCloseReason, MessageType, RoomCloseReason};
 use crate::packet::{
     AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionId, ConnectionPacketWrapPacket,
     FrameworkMessage, Message2Packet, MessagePacket, RoomId, RoomLinkPacket,
@@ -416,7 +416,7 @@ impl ConnectionActor {
                         return Ok(());
                     }
 
-                    self.state.room_state.close(&room_id);
+                    self.state.room_state.close(&room_id, RoomCloseReason::Closed);
                     self.room = None;
 
                     info!(

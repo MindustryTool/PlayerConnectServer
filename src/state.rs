@@ -162,15 +162,15 @@ impl RoomState {
         room_id
     }
 
-    pub fn close(&self, room_id: &RoomId) {
+    pub fn close(&self, room_id: &RoomId, reason: RoomCloseReason) {
         let removed = self.rooms.remove(room_id);
 
         if let Some((_, room)) = removed {
-            info!("Room closed {}", room_id);
+            info!("Room closed {}: {:?}", room_id, reason);
             
             if let Err(e) = room.host_sender.try_send(ConnectionAction::SendTCP(AnyPacket::App(
                 AppPacket::RoomClosed(RoomClosedPacket {
-                    reason: RoomCloseReason::Closed,
+                    reason,
                 }),
             ))) {
                 warn!("Failed to send room closed packet to host {}: {}", room.host_connection_id, e);
@@ -377,7 +377,7 @@ impl AppState {
             };
 
             if should_close {
-                self.room_state.close(&room_id);
+                self.room_state.close(&room_id, RoomCloseReason::Closed);
             }
         }
     }
