@@ -20,7 +20,6 @@ import mindustry.game.Gamemode;
 import playerconnect.PlayerConnectEvents.RoomClosedEvent;
 import playerconnect.shared.Packets;
 import playerconnect.shared.Packets.RoomStats;
-import io.javalin.http.Context;
 import io.javalin.http.sse.SseClient;
 
 import lombok.Data;
@@ -31,8 +30,6 @@ public class HttpServer {
 
     private final Queue<SseClient> statsConsumers = new ConcurrentLinkedQueue<>();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-
-    private final String magicWord = "ditmemay";
 
     public HttpServer() {
         app = Javalin.create(config -> {
@@ -123,18 +120,6 @@ public class HttpServer {
                 Log.err("Failed to send keep alive comment", error);
             }
         }, 0, 1, TimeUnit.SECONDS);
-    }
-
-    private boolean auth(Context context) {
-        var word = context.header("Authorization");
-
-        if (!word.equals(magicWord)) {
-            context.status(403);
-            context.result("Forbidden");
-            return false;
-        }
-
-        return true;
     }
 
     private void sendUpdateEvent(StatsLiveEvent stat) {
