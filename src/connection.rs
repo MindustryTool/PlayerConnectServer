@@ -155,7 +155,7 @@ impl ConnectionActor {
                 }
                 Err(e) => {
                     error!("Error reading packet: {:?} from connection {}", e, self.id);
-                    continue;
+                    break;
                 }
             }
         }
