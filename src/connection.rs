@@ -4,8 +4,7 @@ use crate::packet::{
     FrameworkMessage, Message2Packet, MessagePacket, RoomId, RoomLinkPacket,
 };
 use crate::rate::AtomicRateLimiter;
-use crate::state::{AppState, ConnectionAction, RoomInit, RoomUpdate};
-use crate::utils::current_time_millis;
+use crate::state::{AppState, ConnectionAction, RoomInit};
 use crate::writer::{TcpWriter, UdpWriter};
 use anyhow::anyhow;
 use bytes::{Buf, Bytes, BytesMut};
@@ -235,33 +234,15 @@ impl ConnectionActor {
             }
             AppPacket::Stats(p) => {
                 if let Some(ref room) = self.room {
-                    if let Some(mut r) = self.state.room_state.rooms.get_mut(&room.room_id) {
-                        if !room.is_host {
-                            warn!(
-                                "Connection {} tried to update stats but is not host",
-                                self.id
-                            );
-                            return Ok(());
-                        }
-
-                        let sent_at = p.data.created_at;
-
-                        r.stats = p.data;
-                        r.updated_at = current_time_millis();
-                        r.ping = current_time_millis() - sent_at;
-
-                        if let Err(err) =
-                            self.state
-                                .room_state
-                                .broadcast_sender
-                                .send(RoomUpdate::Update {
-                                    id: r.id.clone(),
-                                    data: r.clone(),
-                                })
-                        {
-                            warn!("Fail to broadcast room update {}", err);
-                        }
+                    if !room.is_host {
+                        warn!(
+                            "Connection {} tried to update stats but is not host",
+                            self.id
+                        );
+                        return Ok(());
                     }
+
+                    self.state.room_state.update_state(&room.room_id, p);
                 }
             }
             AppPacket::RoomJoin(p) => {
@@ -290,27 +271,17 @@ impl ConnectionActor {
                     self.room = None;
                 }
 
-                let (can_join, wrong_password) = (|| {
-                    let room = self.state.room_state.rooms.get(&p.room_id)?;
+                let (room_exists, can_join) =
+                    self.state.room_state.can_join(&p.room_id, &p.password);
 
-                    if let Some(ref pass) = room.password {
-                        if pass != &p.password {
-                            return Some((false, true));
-                        }
-                    }
-
-                    Some((true, false))
-                })()
-                .unwrap_or((false, false));
-
-                if wrong_password {
+                if !room_exists {
                     warn!(
-                        "Connection {} tried to join room {} with wrong password.",
+                        "Connection {} tried to join a non-existent room {}.",
                         self.id, p.room_id
                     );
 
                     self.write_packet(AnyPacket::App(AppPacket::Message(MessagePacket {
-                        message: "@player-connect.wrong-password".to_string(),
+                        message: "@player-connect.room-not-found".to_string(),
                     })))
                     .await?;
 
@@ -319,12 +290,12 @@ impl ConnectionActor {
 
                 if !can_join {
                     warn!(
-                        "Connection {} tried to join a non-existent room {}.",
+                        "Connection {} tried to join room {} with wrong password.",
                         self.id, p.room_id
                     );
 
                     self.write_packet(AnyPacket::App(AppPacket::Message(MessagePacket {
-                        message: "@player-connect.room-not-found".to_string(),
+                        message: "@player-connect.wrong-password".to_string(),
                     })))
                     .await?;
 
@@ -384,22 +355,6 @@ impl ConnectionActor {
                         room_id: room_id.clone(),
                     })))
                     .await?;
-
-                    let Some(room) = self.state.room_state.rooms.get(&room_id) else {
-                        return Err(anyhow!("Can not find room {}", room_id));
-                    };
-
-                    if let Err(err) =
-                        self.state
-                            .room_state
-                            .broadcast_sender
-                            .send(RoomUpdate::Update {
-                                id: room.id.clone(),
-                                data: room.clone(),
-                            })
-                    {
-                        warn!("Fail to broadcast room update {}", err);
-                    }
 
                     info!("Room {} created by connection {}.", room_id, self.id);
                 }

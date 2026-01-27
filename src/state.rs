@@ -4,7 +4,7 @@ use crate::error::AppError;
 use crate::models::{RoomView, Stats};
 use crate::packet::{
     AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionId, ConnectionIdlingPacket,
-    ConnectionJoinPacket, RoomClosedPacket, RoomId,
+    ConnectionJoinPacket, RoomClosedPacket, RoomId, StatsPacket,
 };
 use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;
@@ -54,7 +54,7 @@ pub enum RoomUpdate {
 }
 
 pub struct RoomState {
-    pub rooms: DashMap<RoomId, Room>,
+    rooms: DashMap<RoomId, Room>,
     pub broadcast_sender: tokio::sync::broadcast::Sender<RoomUpdate>,
     // Keep a receiver to prevent the channel from closing when all clients disconnect
     pub _broadcast_receiver: tokio::sync::broadcast::Receiver<RoomUpdate>,
@@ -126,6 +126,40 @@ impl RoomState {
         }
     }
 
+    pub fn update_state(&self, room_id: &RoomId, p: StatsPacket) {
+        if let Some(mut r) = self.rooms.get_mut(&room_id) {
+            let sent_at = p.data.created_at;
+
+            r.stats = p.data;
+            r.updated_at = current_time_millis();
+            r.ping = current_time_millis() - sent_at;
+
+            if let Err(err) = self
+                .broadcast_sender
+                .send(RoomUpdate::Update {
+                    id: r.id.clone(),
+                    data: r.clone(),
+                })
+            {
+                warn!("Fail to broadcast room update {}", err);
+            }
+        } else {
+            warn!("Room not found {}", room_id);
+        }
+    }
+
+    pub fn can_join(&self, room_id: &RoomId, password: &str) -> (bool, bool) {
+        if let Some(room) = self.rooms.get(room_id) {
+            if let Some(pwd) = room.password.as_deref() {
+                (true, pwd == password)
+            } else {
+                (true, true)
+            }
+        } else {
+            (false, false)
+        }
+    }
+
     pub fn create(&self, init: RoomInit) -> RoomId {
         let RoomInit {
             password,
@@ -157,7 +191,14 @@ impl RoomState {
             ping: 0,
         };
 
-        self.rooms.insert(room_id.clone(), room);
+        self.rooms.insert(room_id.clone(), room.clone());
+
+        if let Err(err) = self.broadcast_sender.send(RoomUpdate::Update {
+            id: room_id.clone(),
+            data: room,
+        }) {
+            warn!("Fail to broadcast room update {}", err);
+        }
 
         room_id
     }
@@ -167,13 +208,17 @@ impl RoomState {
 
         if let Some((_, room)) = removed {
             info!("Room closed {}: {:?}", room_id, reason);
-            
-            if let Err(e) = room.host_sender.try_send(ConnectionAction::SendTCP(AnyPacket::App(
-                AppPacket::RoomClosed(RoomClosedPacket {
-                    reason,
-                }),
-            ))) {
-                warn!("Failed to send room closed packet to host {}: {}", room.host_connection_id, e);
+
+            if let Err(e) = room
+                .host_sender
+                .try_send(ConnectionAction::SendTCP(AnyPacket::App(
+                    AppPacket::RoomClosed(RoomClosedPacket { reason }),
+                )))
+            {
+                warn!(
+                    "Failed to send room closed packet to host {}: {}",
+                    room.host_connection_id, e
+                );
             }
 
             for (id, sender) in room.members {
@@ -299,9 +344,8 @@ impl From<&Room> for RoomView {
 pub struct AppState {
     pub config: Config,
     pub room_state: RoomState,
-    pub connections:
-        DashMap<ConnectionId, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>,
-    pub udp_routes: DashMap<SocketAddr, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>,
+    connections: DashMap<ConnectionId, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>,
+    udp_routes: DashMap<SocketAddr, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>,
 }
 
 impl AppState {
