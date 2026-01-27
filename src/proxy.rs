@@ -14,8 +14,8 @@ use tracing::{error, info, warn};
 use crate::packet::ConnectionId;
 const UDP_BUFFER_SIZE: usize = 4096;
 const CHANNEL_CAPACITY: usize = 1024;
-const PACKET_RATE_LIMIT_WINDOW: Duration = Duration::from_millis(3000);
-const PACKET_RATE_LIMIT: u32 = 1000;
+const PACKET_RATE_LIMIT_WINDOW: Duration = Duration::from_millis(1000);
+const PACKET_RATE_LIMIT: u32 = 50000;
 
 pub async fn run(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
     let address = format!("0.0.0.0:{}", port);
