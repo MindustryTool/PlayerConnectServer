@@ -1,14 +1,21 @@
-FROM gradle:8.9.0-jdk17 AS build
-COPY --chown=gradle:gradle . /home/gradle/src
+# ---------- Build stage ----------
+FROM rust:1.85-slim AS build
+WORKDIR /app
 
-WORKDIR /home/gradle/src
+# Cache dependencies
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src && touch src/main.rs
+RUN cargo fetch
 
-RUN chmod +x gradlew
+# Copy real source
+COPY . .
+RUN cargo build --release
 
-RUN ./gradlew jar --no-daemon
+# ---------- Runtime stage ----------
+FROM gcr.io/distroless/cc-debian12
+WORKDIR /app
 
-FROM eclipse-temurin:17-jre-alpine
+COPY --from=build /app/target/release/server /app/server
 
-COPY --from=build /home/gradle/src/build/libs/*.jar /app/server.jar
-
-ENTRYPOINT ["java","-Xmx384m","-jar", "/app/server.jar"]
+USER nonroot
+ENTRYPOINT ["/app/server"]
