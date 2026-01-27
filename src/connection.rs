@@ -117,7 +117,6 @@ impl ConnectionActor {
                     }
 
                     if self.last_read.elapsed() > CONNECTION_TIME_OUT_MS {
-                        info!("{} Connection timed out", self.id);
                         return Err(anyhow::anyhow!("Connection timed out"));
                     }
                 }
