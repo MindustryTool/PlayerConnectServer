@@ -1,12 +1,11 @@
 use crate::models::{RemoveRemoveEvent, RoomUpdateEvent, RoomView};
-use crate::packet::RoomId;
 use crate::state::{AppState, RoomUpdate};
 use axum::{
-    extract::{Path, State},
+    extract::State,
     http::header,
     response::{
         sse::{Event, KeepAlive, Sse},
-        Html, IntoResponse,
+        IntoResponse,
     },
     routing::{get, post},
     Router,
@@ -23,7 +22,6 @@ pub async fn run(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/ping", get(ping))
         .route("/rooms", get(rooms_sse))
-        .route("/:roomId", get(room_page))
         .route("/:roomId", post(room_port))
         .with_state(state);
 
@@ -41,15 +39,7 @@ async fn rooms_sse(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let rx = state.room_state.broadcast_sender.subscribe();
     let stream = BroadcastStream::new(rx);
 
-    let initial_rooms: Vec<RoomUpdateEvent> = state
-        .room_state
-        .rooms
-        .iter()
-        .map(|entry| RoomUpdateEvent {
-            room_id: entry.key().0.clone(),
-            data: RoomView::from(entry.value()),
-        })
-        .collect();
+    let initial_rooms: Vec<RoomUpdateEvent> = state.room_state.into_views();
 
     let init_stream = once(async move {
         Event::default()
@@ -89,76 +79,6 @@ async fn rooms_sse(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         ],
         Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(3))),
     )
-}
-
-async fn room_page(
-    Path(room_id): Path<String>,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let stats = state
-        .room_state
-        .rooms
-        .get(&RoomId(room_id))
-        .map(|r| r.stats.clone());
-
-    if let Some(stats) = stats {
-        let html = format!(
-            r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Room: {}</title>
-    <meta property="og:title" content="Room: {}" />
-    <meta property="og:description" content="Map: {}, Gamemode: {}, Players: {}, Version: {}" />
-    <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Mindustry PlayerConnect" />
-    
-    <!-- Additional OpenGraph Tags for Stats -->
-    <meta property="og:map_name" content="{}" />
-    <meta property="og:gamemode" content="{}" />
-    <meta property="og:player_count" content="{}" />
-    <meta property="og:locale" content="{}" />
-    <meta property="og:version" content="{}" />
-    <meta property="og:created_at" content="{}" />
-    
-</head>
-<body>
-    <h1>Room: {}</h1>
-    <ul>
-        <li><strong>Map:</strong> {}</li>
-        <li><strong>Gamemode:</strong> {}</li>
-        <li><strong>Players:</strong> {}</li>
-        <li><strong>Locale:</strong> {}</li>
-        <li><strong>Version:</strong> {}</li>
-        <li><strong>Created At:</strong> {}</li>
-    </ul>
-</body>
-</html>"#,
-            stats.name,
-            stats.name,
-            stats.map_name,
-            stats.gamemode,
-            stats.players.len(),
-            stats.version,
-            stats.map_name,
-            stats.gamemode,
-            stats.players.len(),
-            stats.locale,
-            stats.version,
-            stats.created_at,
-            stats.name,
-            stats.map_name,
-            stats.gamemode,
-            stats.players.len(),
-            stats.locale,
-            stats.version,
-            stats.created_at
-        );
-        Html(html)
-    } else {
-        Html("<h1>Room not found</h1>".to_string())
-    }
 }
 
 async fn room_port(State(state): State<Arc<AppState>>) -> impl IntoResponse {

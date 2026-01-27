@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::constant::{ConnectionCloseReason, RoomCloseReason};
 use crate::error::AppError;
-use crate::models::{RoomView, Stats};
+use crate::models::{RoomUpdateEvent, RoomView, Stats};
 use crate::packet::{
     AnyPacket, AppPacket, ConnectionClosedPacket, ConnectionId, ConnectionIdlingPacket,
     ConnectionJoinPacket, RoomClosedPacket, RoomId, StatsPacket,
@@ -81,6 +81,16 @@ impl RoomState {
             .cloned()
     }
 
+    pub fn into_views(&self) -> Vec<RoomUpdateEvent> {
+        self.rooms
+            .iter()
+            .map(|entry| RoomUpdateEvent {
+                room_id: entry.key().0.clone(),
+                data: RoomView::from(entry.value()),
+            })
+            .collect()
+    }
+
     pub fn join(
         &self,
         connection_id: ConnectionId,
@@ -134,13 +144,10 @@ impl RoomState {
             r.updated_at = current_time_millis();
             r.ping = current_time_millis() - sent_at;
 
-            if let Err(err) = self
-                .broadcast_sender
-                .send(RoomUpdate::Update {
-                    id: r.id.clone(),
-                    data: r.clone(),
-                })
-            {
+            if let Err(err) = self.broadcast_sender.send(RoomUpdate::Update {
+                id: r.id.clone(),
+                data: r.clone(),
+            }) {
                 warn!("Fail to broadcast room update {}", err);
             }
         } else {
