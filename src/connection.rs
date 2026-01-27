@@ -229,6 +229,10 @@ impl ConnectionActor {
 
     async fn handle_app(&mut self, packet: AppPacket) -> anyhow::Result<()> {
         match packet {
+            AppPacket::Ping(p) => {
+                self.write_packet(AnyPacket::App(AppPacket::Ping(p)))
+                    .await?;
+            }
             AppPacket::Stats(p) => {
                 if let Some(ref room) = self.room {
                     if let Some(mut r) = self.state.room_state.rooms.get_mut(&room.room_id) {
@@ -416,7 +420,9 @@ impl ConnectionActor {
                         return Ok(());
                     }
 
-                    self.state.room_state.close(&room_id, RoomCloseReason::Closed);
+                    self.state
+                        .room_state
+                        .close(&room_id, RoomCloseReason::Closed);
                     self.room = None;
 
                     info!(

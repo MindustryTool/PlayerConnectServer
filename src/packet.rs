@@ -62,6 +62,7 @@ pub enum AppPacket {
     Popup(PopupPacket),
     Message2(Message2Packet),
     Stats(StatsPacket),
+    Ping(PingPacket),
 }
 
 #[derive(Debug, Clone)]
@@ -132,6 +133,11 @@ pub struct Message2Packet {
 #[derive(Debug, Clone)]
 pub struct StatsPacket {
     pub data: Stats,
+}
+
+#[derive(Debug, Clone)]
+pub struct PingPacket {
+    pub send_at: i64,
 }
 
 impl AnyPacket {
@@ -301,6 +307,9 @@ impl AppPacket {
             12 => Ok(AppPacket::Stats(StatsPacket {
                 data: read_stats(buf)?,
             })),
+            13 => Ok(AppPacket::Ping(PingPacket {
+                send_at: buf.get_i64(),
+            })),
             _ => Err(AppError::PacketParsing(format!(
                 "Unknown App Packet ID: {}",
                 pid
@@ -365,6 +374,10 @@ impl AppPacket {
             }
             AppPacket::Stats(_) => {
                 panic!("Client only")
+            }
+            AppPacket::Ping(p) => {
+                buf.put_u8(13);
+                buf.put_i64(p.send_at);
             }
         }
     }
