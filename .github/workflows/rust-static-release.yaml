@@ -30,12 +30,12 @@ jobs:
       - name: Prepare artifact
         run: |
           mkdir -p dist
-          cp target/x86_64-unknown-linux-gnu/release/player-connect-server-rust dist/
+          cp target/x86_64-unknown-linux-gnu/release/server dist/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
           name: Release v${{ github.run_number }}
-          files: dist/player-connect-server
+          files: dist/server
           generate_release_notes: true
