@@ -13,7 +13,7 @@ use tracing::{error, info, warn};
 
 use crate::packet::ConnectionId;
 const UDP_BUFFER_SIZE: usize = 4096;
-const CHANNEL_CAPACITY: usize = 1024;
+const CHANNEL_CAPACITY: usize = 4096;
 const PACKET_RATE_LIMIT_WINDOW: Duration = Duration::from_millis(1000);
 const PACKET_RATE_LIMIT: u32 = 50000;
 
