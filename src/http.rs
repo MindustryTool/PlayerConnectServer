@@ -16,13 +16,20 @@ use std::time::Duration;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 pub async fn run(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let app = Router::new()
         .route("/ping", get(ping))
         .route("/rooms", get(rooms_sse))
         .route("/:roomId", post(room_port))
+        .layer(cors)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
