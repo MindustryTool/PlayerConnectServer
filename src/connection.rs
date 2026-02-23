@@ -16,8 +16,8 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 const TCP_BUFFER_SIZE: usize = 32768;
-const CONNECTION_TIME_OUT_MS: Duration = Duration::from_millis(30000);
-const KEEP_ALIVE_INTERVAL_MS: Duration = Duration::from_millis(3000);
+const CONNECTION_TIME_OUT_MS: Duration = Duration::from_millis(10_000);
+const KEEP_ALIVE_INTERVAL_MS: Duration = Duration::from_millis(3_000);
 const PACKET_LENGTH_LENGTH: usize = 2;
 const TICK_INTERVAL_MS: u64 = 1000 / 120;
 const PACKET_BACTH_SIZE: usize = 32;
