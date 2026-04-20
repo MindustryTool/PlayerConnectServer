@@ -338,11 +338,13 @@ impl ConnectionActor {
                 }
 
                 if let Some(sender) = self.state.get_sender(self.id) {
+                    let id = p.data.id.clone();
                     let room_id = self.state.room_state.create(RoomInit {
                         connection_id: self.id,
                         password: p.password,
                         stats: p.data,
                         protocol_version: p.version,
+                        id: id,
                         sender,
                     });
                     self.room = Some(ConnectionRoom {

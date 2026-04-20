@@ -66,6 +66,7 @@ pub struct RoomInit {
     pub stats: Stats,
     pub sender: mpsc::Sender<ConnectionAction>,
     pub protocol_version: String,
+    pub id: Option<String>,
 }
 
 impl RoomState {
@@ -174,6 +175,7 @@ impl RoomState {
             stats,
             sender,
             protocol_version,
+            id,
         } = init;
 
         let password = if password.is_empty() {
@@ -182,7 +184,7 @@ impl RoomState {
             Some(password)
         };
 
-        let room_id = RoomId(Uuid::now_v7().to_string());
+        let room_id = RoomId(id.unwrap_or(Uuid::now_v7().to_string()));
         let members = HashMap::new();
 
         let room = Room {

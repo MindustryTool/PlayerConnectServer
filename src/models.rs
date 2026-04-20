@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Stats {
+    pub id: Option<String>,
     pub players: Vec<Player>,
     #[serde(rename = "mapName")]
     pub map_name: String,
