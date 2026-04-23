@@ -441,6 +441,10 @@ impl ConnectionActor {
                     }
 
                     let Some(sender) = self.state.get_sender(connection_id) else {
+                        if !self.state.mark_missing_connection(connection_id) {
+                            return Ok(());
+                        }
+
                         warn!("Connection not found: {}", connection_id);
 
                         self.state.room_state.forward_to_host(

@@ -9,7 +9,7 @@ use crate::packet::{
 use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;
 use bytes::Bytes;
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -354,6 +354,7 @@ pub struct AppState {
     pub config: Config,
     pub room_state: RoomState,
     connections: DashMap<ConnectionId, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>,
+    missing_connections: DashSet<ConnectionId>,
     udp_routes: DashMap<SocketAddr, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>,
 }
 
@@ -368,6 +369,7 @@ impl AppState {
                 _broadcast_receiver: rx,
             },
             connections: DashMap::new(),
+            missing_connections: DashSet::new(),
             udp_routes: DashMap::new(),
         }
     }
@@ -378,6 +380,7 @@ impl AppState {
         sender: mpsc::Sender<ConnectionAction>,
         limiter: Arc<AtomicRateLimiter>,
     ) {
+        self.missing_connections.remove(&id);
         self.connections.insert(id, (sender, limiter));
     }
 
@@ -400,6 +403,10 @@ impl AppState {
 
     pub fn get_sender(&self, id: ConnectionId) -> Option<mpsc::Sender<ConnectionAction>> {
         self.connections.get(&id).map(|val| val.0.clone())
+    }
+
+    pub fn mark_missing_connection(&self, id: ConnectionId) -> bool {
+        self.missing_connections.insert(id)
     }
 
     pub fn get_route(
