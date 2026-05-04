@@ -9,10 +9,12 @@ use crate::packet::{
 use crate::rate::AtomicRateLimiter;
 use crate::utils::current_time_millis;
 use bytes::Bytes;
-use dashmap::{DashMap, DashSet};
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -354,7 +356,7 @@ pub struct AppState {
     pub config: Config,
     pub room_state: RoomState,
     connections: DashMap<ConnectionId, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>,
-    missing_connections: DashSet<ConnectionId>,
+    missing_connections: Arc<DashMap<ConnectionId, Instant>>,
     udp_routes: DashMap<SocketAddr, (mpsc::Sender<ConnectionAction>, Arc<AtomicRateLimiter>)>,
 }
 
@@ -369,7 +371,7 @@ impl AppState {
                 _broadcast_receiver: rx,
             },
             connections: DashMap::new(),
-            missing_connections: DashSet::new(),
+            missing_connections: Arc::new(DashMap::new()),
             udp_routes: DashMap::new(),
         }
     }
@@ -406,7 +408,30 @@ impl AppState {
     }
 
     pub fn mark_missing_connection(&self, id: ConnectionId) -> bool {
-        self.missing_connections.insert(id)
+        let inserted_at = Instant::now();
+
+        match self.missing_connections.entry(id) {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(entry) => {
+                entry.insert(inserted_at);
+
+                let missing_connections = Arc::clone(&self.missing_connections);
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(5 * 60)).await;
+
+                    let should_remove = missing_connections
+                        .get(&id)
+                        .map(|current| *current == inserted_at)
+                        .unwrap_or(false);
+
+                    if should_remove {
+                        missing_connections.remove(&id);
+                    }
+                });
+
+                true
+            }
+        }
     }
 
     pub fn get_route(
