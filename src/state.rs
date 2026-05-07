@@ -345,7 +345,7 @@ impl From<&Room> for RoomView {
             mods: room.stats.mods.clone(),
             locale: room.stats.locale.clone(),
             version: room.stats.version.clone(),
-            created_at: room.stats.created_at,
+            created_at: room.created_at,
             ping: room.ping,
             protocol_version: room.protocol_version.clone(),
         }
