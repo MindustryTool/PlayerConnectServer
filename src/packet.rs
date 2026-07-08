@@ -12,6 +12,10 @@ pub const FRAMEWORK_PACKET_ID: i8 = -2;
 pub const STREAM_BEGIN_PACKET_ID: u8 = 0;
 pub const STREAM_CHUNK_PACKET_ID: u8 = 1;
 pub const WORLD_STREAM_PACKET_ID: u8 = 2;
+pub const CONNECT_PACKET_ID: u8 = 3;
+pub const ASSET_REQUIREMENT_STREAM_PACKET_ID: u8 = 4;
+pub const ASSET_STREAM_PACKET_ID: u8 = 5;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConnectionId(pub i32);
@@ -145,6 +149,9 @@ impl AnyPacket {
         bytes.starts_with(&[STREAM_BEGIN_PACKET_ID])
             || bytes.starts_with(&[STREAM_CHUNK_PACKET_ID])
             || bytes.starts_with(&[WORLD_STREAM_PACKET_ID])
+            || bytes.starts_with(&[CONNECT_PACKET_ID])
+            || bytes.starts_with(&[ASSET_REQUIREMENT_STREAM_PACKET_ID])
+            || bytes.starts_with(&[ASSET_STREAM_PACKET_ID])
     }
 
     pub fn read(buf: &mut Cursor<Bytes>) -> Result<Self, AppError> {
