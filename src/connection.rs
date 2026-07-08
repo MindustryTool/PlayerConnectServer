@@ -437,8 +437,9 @@ impl ConnectionActor {
                     }
 
                     if AnyPacket::is_stream_packet(&buffer) {
-                        self.tcp_writer.idling = true;
+                        // DEUBG self.tcp_writer.idling = true;
                     }
+                    self.tcp_writer.idling = true;
 
                     let Some(sender) = self.state.get_sender(connection_id) else {
                         if !self.state.mark_missing_connection(connection_id) {
