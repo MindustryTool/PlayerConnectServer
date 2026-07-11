@@ -24,7 +24,7 @@ pub async fn run(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {
 
     info!("Proxy Server listening on TCP/UDP {}", port);
 
-    for _ in 0..4 {
+    for _ in 0..8 {
         spawn_udp_listener(state.clone(), udp_socket.clone());
     }
 
