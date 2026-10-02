@@ -58,8 +58,6 @@ pub enum RoomUpdate {
 pub struct RoomState {
     rooms: DashMap<RoomId, Room>,
     pub broadcast_sender: tokio::sync::broadcast::Sender<RoomUpdate>,
-    // Keep a receiver to prevent the channel from closing when all clients disconnect
-    pub _broadcast_receiver: tokio::sync::broadcast::Receiver<RoomUpdate>,
 }
 
 pub struct RoomInit {
@@ -362,13 +360,12 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: Config) -> Self {
-        let (tx, rx) = tokio::sync::broadcast::channel(1024);
+        let (tx, _rx) = tokio::sync::broadcast::channel(1024);
         Self {
             config,
             room_state: RoomState {
                 rooms: DashMap::new(),
                 broadcast_sender: tx,
-                _broadcast_receiver: rx,
             },
             connections: DashMap::new(),
             missing_connections: Arc::new(DashMap::new()),

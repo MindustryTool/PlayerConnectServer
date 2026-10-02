@@ -98,7 +98,10 @@ impl ConnectionActor {
                                 slices.push(IoSlice::new(header));
                                 slices.push(IoSlice::new(payload));
                             }
-                            self.tcp_writer.write_vectored(&slices).await?;
+                            match tokio::time::timeout(Duration::from_secs(5), self.tcp_writer.write_vectored(&slices)).await {
+                                Ok(res) => res?,
+                                Err(_) => return Err(anyhow::anyhow!("Write timeout")),
+                            }
                         }
 
 
@@ -537,7 +540,10 @@ impl ConnectionActor {
         let bytes = packet.to_bytes().freeze();
         let len = (bytes.len() as u16).to_be_bytes();
         let slices = [IoSlice::new(&len), IoSlice::new(&bytes)];
-        self.tcp_writer.write_vectored(&slices).await
+        match tokio::time::timeout(Duration::from_secs(5), self.tcp_writer.write_vectored(&slices)).await {
+            Ok(res) => res,
+            Err(_) => Err(anyhow::anyhow!("Write timeout")),
+        }
     }
 
     fn notify_idle(&mut self) {
